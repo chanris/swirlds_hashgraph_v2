@@ -19,46 +19,55 @@ import java.util.List;
 
 public class DepthFirstSearch {
 
-    public static void dfs(Node startNode, Node targetNode, List<Integer> path, List<List<Integer>> paths) {
+    public static List<List<Node>> findAllPaths(Node node, Node target) {
+        List<List<Node>> paths = new ArrayList<>();
+        List<Node> path = new ArrayList<>();
+        findPath(node, target, path, paths);
+        return paths;
+    }
+
+    public static void findPath(Node node, Node target, List<Node> path, List<List<Node>> paths) {
         // 标记节点为已访问
-        startNode.visited = true;
-        path.add(startNode.val);
+        node.visited = true;
+        path.add(node);
 
         // 如果当前节点是目标节点，则将当前路径添加到结果列表中
-        if (startNode == targetNode) {
+        if (node == target) {
             paths.add(new ArrayList<>(path));
         }
 
         // 递归遍历相邻节点
-        for (Node neighbor : startNode.neighbors) {
+        for (Node neighbor : node.neighbors) {
             if (!neighbor.visited) {
-                dfs(neighbor, targetNode, path, paths);
+                findPath(neighbor, target, path, paths);
             }
         }
 
         // 回溯，移除当前节点
         path.remove(path.size() - 1);
-        startNode.visited = false;
+        node.visited = false;
     }
 
-
-    public static void dfs(Node startNode, Node targetNode, List<Integer> path) {
+    // 使用广度优先搜索找到一条路径
+    public static boolean findPath(Node startNode, Node targetNode, List<Node> path) {
         startNode.visited = true;
-        System.out.println(startNode.val + " ");
-        path.add(startNode.val);
+        path.add(startNode);
         if (startNode == targetNode) {
-            return;
+            return true;
         }
         // 递归遍历相邻节点
         for (Node neighbor : startNode.neighbors) {
             if (!neighbor.visited) {
-                dfs(neighbor, targetNode, path);
+                boolean found = findPath(neighbor, targetNode, path);
+                if (found) {
+                    return true;
+                }
             }
         }
 
         // 回溯，移除当前节点
         path.remove(path.size() - 1);
-        startNode.visited = false;
+        return false;
     }
 
     public static void main(String[] args) {
@@ -91,7 +100,47 @@ public class DepthFirstSearch {
         nodeList.add(node12);
         nodeList.add(node14);
 
+        node4.neighbors.add(node1);
+        node4.neighbors.add(node);
+
+        node5.neighbors.add(node4);
+        node5.neighbors.add(node1);
+
+        node6.neighbors.add(node2);
+        node6.neighbors.add(node3);
+
+        node7.neighbors.add(node5);
+        node7.neighbors.add(node3);
+
+        node8.neighbors.add(node4);
+        node8.neighbors.add(node6);
+
+        node9.neighbors.add(node5);
+        node9.neighbors.add(node10);
+
+        node10.neighbors.add(node5);
+        node10.neighbors.add(node6);
+
+        node12.neighbors.add(node8);
+        node12.neighbors.add(node14);
+
+        node14.neighbors.add(node9);
+        node14.neighbors.add(node10);
 
 
+//        List<Node> path = new ArrayList<>();
+//        dfs(node12, node1, path);
+//        path.forEach(item->{
+//            System.out.print(item.val + " ");
+//        });
+
+
+        List<List<Node>> allPaths = findAllPaths(node1, node12);
+        for (List<Node> lst : allPaths) {
+            for (Node item : lst) {
+                System.out.print(item.val+" ");
+            }
+            System.out.println();
+        }
     }
 }

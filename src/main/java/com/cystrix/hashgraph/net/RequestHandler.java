@@ -3,10 +3,14 @@ package com.cystrix.hashgraph.net;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.cystrix.hashgraph.exception.BusinessException;
+import com.cystrix.hashgraph.hashview.Event;
 import com.cystrix.hashgraph.hashview.HashgraphMember;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 
 public class RequestHandler {
@@ -27,11 +31,44 @@ public class RequestHandler {
             case "/shutdown":
                 shutdownMapping(request, response);
                 break;
+            case "/pullEvent":
+                pullEventMapping(request, response);
+                break;
             default:
                 defaultMapping(request, response);
                 break;
         }
         return response;
+    }
+
+
+    private void pullEventMapping(Request request, Response response) {
+        String requestDataJSonString = request.getData();
+        // Map<id:Integer, Chain.size():Integer>
+        HashMap<Integer, Integer> hashMap;
+        try {
+            hashMap = JSONObject.parseObject(requestDataJSonString, HashMap.class);
+        }catch (Exception e) {
+            e.printStackTrace();
+            response.setCode(400);
+            response.setData("request parameter error: "+ request.getData());
+            return;
+        }
+
+        ConcurrentHashMap<Integer, List<Event>> subEventList = new ConcurrentHashMap<>();
+        this.hashgraphMember.getHashgraph().forEach((id, chain)->{
+            int my_size = chain.size();
+            int guest_size = hashMap.get(id);
+            if (my_size > guest_size) {
+                subEventList.put(id,  chain.subList(guest_size, my_size));
+            }
+        });
+        String res;
+        res = JSON.toJSONString(subEventList);
+
+        response.setCode(200);
+        response.setMessage("SUCCESS");
+        response.setData(res);
     }
 
 

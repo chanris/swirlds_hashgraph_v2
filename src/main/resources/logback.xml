@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<configuration debug="true" scan="true" scanPeriod="60 seconds">
+    <!--等同于<configuration debug="true">-->
+    <!-- Recommendation: place status listeners towards the the top of the configuration file -->
+    <!--    <statusListener class="ch.qos.logback.core.status.OnConsoleStatusListener"/>-->
+    <!--变量-->
+    <!--日志的根目录，根据实际情况设置-->
+    <property name="LOG_HOME" value="E:/IDEA-Repository/IDEA-workspace5/swirlds_hashgraph_v2.0/logs"/>
+    <!--控制台输出-->
+    <appender name="STDOUT"
+              class="ch.qos.logback.core.ConsoleAppender">
+        <!-- encoders are assigned by default the type
+             ch.qos.logback.classic.encoder.PatternLayoutEncoder -->
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+    <appender name="FILE" class="ch.qos.logback.core.FileAppender">
+        <file>${LOG_HOME}/rocketmq_demo.log</file>
+        <encoder>
+            <pattern>%date %level [%thread] %logger{10} [%file:%line] %msg%n</pattern>
+        </encoder>
+    </appender>
+    <!--
+    RollingFileAppender:
+    rollingPolicy://回滚策略
+        TimeBasedRollingPolicy
+        FixedWindowRollingPolicy
+    triggeringPolicy://触发策略
+        SizeBasedTriggeringPolicy
+    -->
+    <!--每天生产一个日志文件，保留30天的日志-->
+    <appender name="ROLLING_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_HOME}/logfile.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+    <!--每天生产一个日志文件，日志文件最大1MB，保留30天的日志-->
+    <appender name="SIZE_BASED_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_HOME}/log_size_based_file.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <!--默认值：10485760=10*2^20=10MB-->
+            <!--日志文件最大100MB，超过100MB不记录-->
+            <maxFileSize>100MB</maxFileSize>
+        </triggeringPolicy>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+    <!--固定生成日志文件数量，当日志文件大小达到20MB时压缩-->
+    <appender name="FIXED_WINDOW_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_HOME}/log_fixed_window_file.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+            <minIndex>1</minIndex>
+            <maxIndex>10</maxIndex>
+            <!--
+            假设maxIndex为3，已生成文件数量达到maxIndex，文件名分别为log.1.zip，log.2.zip,log.3.zip
+            之后新生成的文件将覆盖log.1.zip，
+            再之后新生成的文件仍然覆盖log.1.zip,但是之前的log.1.zip将覆盖log.2.zip
+            再之后，又新生成了文件，那么log.2.zip将覆盖log.3.zip，log.1.zip覆盖log.2.zip，新文件覆盖log.1.zip
+            -->
+            <fileNamePattern>${LOG_HOME}/log_fixed_window_file.%i.log.zip</fileNamePattern>
+        </rollingPolicy>
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <!--默认值：10485760=10*2^20=10MB-->
+            <maxFileSize>20MB</maxFileSize>
+        </triggeringPolicy>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!--<logger level="trace" name="com.example.logbackdemo.test.Test1">
+        <appender-ref ref="FIXED_WINDOW_FILE"/>
+    </logger>-->
+
+    <root level="info">
+        <appender-ref ref="STDOUT"/>
+        <appender-ref ref="FIXED_WINDOW_FILE"/>
+    </root>
+</configuration>
