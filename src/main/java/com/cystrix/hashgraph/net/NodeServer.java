@@ -70,7 +70,7 @@ public class NodeServer {
         while (!shutdown) {
             // 间隔 100 ~ 150 ms 发起一次通信
             int time = new Random(System.currentTimeMillis() / (this.hashgraphMember.getId() + 1)
-                    + this.hashgraphMember.getId() * 100).nextInt(100) + 50;
+                    + this.hashgraphMember.getId() * 100).nextInt(1000) + 500;
             TimeUnit.MILLISECONDS.sleep(time);
 
             // 选择邻居节点
@@ -109,8 +109,9 @@ public class NodeServer {
 
                     // for search parent hash
                     this.hashgraphMember.getEventHashMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
-                    // log.info("node_id:{} request node_id:{} gossip communication success!", this.hashgraphMember.getId(), receiverId);
-                    if (nodeId == 0) {
+                    //log.info("node_id:{} request node_id:{} gossip communication success!", this.hashgraphMember.getId(), receiverId);
+                    //log.info("node_Id:{} hashgraph replicas: {}", this.hashgraphMember.getId(), this.hashgraphMember.getHashgraph().get(0));
+                    /*if (nodeId == 0) {
                          //log.info("node_Id:{} hashgraph replicas: {}", this.hashgraphMember.getId(), this.hashgraphMember.getHashgraph());
 
                         List<Integer> chainSizeList = new ArrayList<>();
@@ -118,7 +119,8 @@ public class NodeServer {
                             chainSizeList.add(c.size());
                         });
                         log.info("node_Id:{} hashgraph replicas: {}", this.hashgraphMember.getId(), chainSizeList);
-                    }
+                    }*/
+
                 }else {
                     log.warn("node_id:{} request node_id:{} gossip communication failed!", this.hashgraphMember.getId(), receiverId);
                 }

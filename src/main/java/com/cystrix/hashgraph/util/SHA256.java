@@ -1,5 +1,6 @@
 package com.cystrix.hashgraph.util;
 
+import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.cystrix.hashgraph.exception.BusinessException;
 import com.cystrix.hashgraph.hashview.Event;
@@ -212,4 +213,9 @@ public class SHA256 {
         return UUID.randomUUID().toString().replace("-", "");
     }
 
+
+
+    public synchronized  static String toJSONString(Object o) {
+        return JSON.toJSONString(o);
+    }
 }

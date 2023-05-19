@@ -61,7 +61,9 @@ public class Event implements Cloneable {
     }
 
     public String toString() {
-        return  "{packer:"+packer+",otherParentHash:"+otherParentHash+",selfParentHash:"+selfParentHash + ",transactionList:" + transactionList
-                +",timestamp:" + timestamp +",signature:" + signature +"}";
+//        return  "{packer:"+packer+",otherParentHash:"+otherParentHash+",selfParentHash:"+selfParentHash + ",transactionList:" + transactionList
+//                +",timestamp:" + timestamp +",signature:" + signature +"}";
+
+        return  "{otherParentHash:"+otherParentHash+"}\n";
     }
 }

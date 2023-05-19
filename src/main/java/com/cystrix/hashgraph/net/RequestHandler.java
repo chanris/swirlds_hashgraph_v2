@@ -5,11 +5,11 @@ import com.alibaba.fastjson2.JSONObject;
 import com.cystrix.hashgraph.exception.BusinessException;
 import com.cystrix.hashgraph.hashview.Event;
 import com.cystrix.hashgraph.hashview.HashgraphMember;
+import com.cystrix.hashgraph.util.SHA256;
 
 import java.io.BufferedReader;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 
@@ -41,7 +41,7 @@ public class RequestHandler {
         return response;
     }
 
-
+    // shared variables：  this.hashgraphMember.getHashgraph():ConcurrentHashMap(Integer, List<Event>)
     private void pullEventMapping(Request request, Response response) {
         String requestDataJSonString = request.getData();
         // Map<id:Integer, Chain.size():Integer>
@@ -55,20 +55,10 @@ public class RequestHandler {
             return;
         }
 
-        ConcurrentHashMap<Integer, List<Event>> subEventList = new ConcurrentHashMap<>();
-        this.hashgraphMember.getHashgraph().forEach((id, chain)->{
-            int my_size = chain.size();
-            int guest_size = hashMap.get(id);
-            if (my_size > guest_size) {
-                subEventList.put(id,  chain.subList(guest_size, my_size));
-            }
-        });
-        String res;
-        res = JSON.toJSONString(subEventList);
+        generatePullEvents(hashMap, response);
 
         response.setCode(200);
         response.setMessage("SUCCESS");
-        response.setData(res);
     }
 
 
@@ -121,6 +111,27 @@ public class RequestHandler {
         this.hashgraphMember.setShutdown(true);
         response.setCode(200);
         response.setMessage("SUCCESS");
+    }
+
+    private /*synchronized*/ void generatePullEvents( HashMap<Integer, Integer> hashMap, Response response) {
+        ConcurrentHashMap<Integer, List<Event>> subEventList = new ConcurrentHashMap<>();
+        for (Map.Entry<Integer, List<Event>> entry : this.hashgraphMember.getHashgraph().entrySet()) {
+            Integer id = entry.getKey();
+            List<Event> chain = entry.getValue();
+            int my_size = chain.size();
+            int guest_size = hashMap.get(id);
+            if (my_size > guest_size) {
+//                subEventList.put(id, chain.subList(guest_size, my_size));  !!!!! 巨坑： watch out ! 会引发并发问题T_T T_T
+                List<Event> c = new ArrayList<>(chain.size());
+                for (int i = guest_size; i < my_size; i++) {
+                    c.add(chain.get(i));
+                }
+                subEventList.put(id, c);
+            }
+        }
+        String res;
+        res = JSON.toJSONString(subEventList);
+        response.setData(res);
     }
 
 }
