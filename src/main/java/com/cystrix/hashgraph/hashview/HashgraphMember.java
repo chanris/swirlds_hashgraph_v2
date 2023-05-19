@@ -1,21 +1,19 @@
 package com.cystrix.hashgraph.hashview;
 
 import com.alibaba.fastjson2.JSON;
-import com.cystrix.hashgraph.exception.BusinessException;
 import com.cystrix.hashgraph.hashview.search.DFS;
 import com.cystrix.hashgraph.util.SHA256;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 
-import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 @Slf4j
 @Data
 public class HashgraphMember {
-
-     {
+    {
         Map<String, String> keyPair = SHA256.generateKeyPairBase64();
         PK = keyPair.get("PK");
         SK = keyPair.get("SK");
@@ -27,8 +25,11 @@ public class HashgraphMember {
     private boolean shutdown = false;
     private  final String PK;
     private  final String SK; // sk base64 encode
+    private List<Transaction> waitForPackEventList;
 
     private ConcurrentHashMap<String, Event> eventHashMap;
+
+    private Object lock = new Object();
 
     public String getPk() {
         return this.PK;
@@ -42,6 +43,7 @@ public class HashgraphMember {
         this.numNodes = numNodes;
         this.hashgraph = new ConcurrentHashMap<>();
         this.eventHashMap = new ConcurrentHashMap<>();
+        this.waitForPackEventList = new ArrayList<>();
         for (int i = 0; i < this.numNodes; i++) {
             List<Event> chain = new ArrayList<>();
             this.hashgraph.put(i,chain);
@@ -84,7 +86,6 @@ public class HashgraphMember {
         return true;
     }
 
-
     // todo 没有考虑拜占庭节点行为
     public synchronized boolean addEventBatch(HashMap<Integer, List<Event>> subHashgraph) {
 
@@ -102,36 +103,35 @@ public class HashgraphMember {
             }
         });
 
+        // for build DFS structure
+        subHashgraph.forEach((id, chain)->{
+            // 找到新加入的事件的自父亲event
+            if (chain.size() != 0) {
+                for (int i = chain.size()- 1; i > 0; i--) {
+                    Event e = chain.get(i);
+                    e.setSelfParent(chain.get(i-1));
+                    Event otherParent = this.eventHashMap.get(e.getOtherParentHash());
+                    e.setOtherParent(otherParent);
 
-            // for build DFS structure
-            subHashgraph.forEach((id, chain)->{
-                // 找到新加入的事件的自父亲event
-                if (chain.size() != 0) {
-                    for (int i = chain.size()- 1; i > 0; i--) {
-                        Event e = chain.get(i);
-                        e.setSelfParent(chain.get(i-1));
-                        Event otherParent = this.eventHashMap.get(e.getOtherParentHash());
-                        e.setOtherParent(otherParent);
-
-                        List<Event> neighbors = new ArrayList<>(2);
-                        neighbors.add(e.getSelfParent());
-                        neighbors.add(otherParent);
-                        e.setNeighbors(neighbors);
-                    }
-
-                    // 若不是第一个event，则说明有父亲事件
-                    int index = this.hashgraph.get(id).indexOf(chain.get(0));
-                    if (index != 0) {
-                        List<Event> neighbors = new ArrayList<>(2);
-                        Event selfParent = this.hashgraph.get(id).get(index-1);
-                        Event otherParent = this.eventHashMap.get(chain.get(0).getOtherParentHash());
-                        chain.get(0).setSelfParent(selfParent);
-                        chain.get(0).setOtherParent(otherParent);
-                        neighbors.add(selfParent);
-                        neighbors.add(otherParent);
-                    }
+                    List<Event> neighbors = new ArrayList<>(2);
+                    neighbors.add(e.getSelfParent());
+                    neighbors.add(otherParent);
+                    e.setNeighbors(neighbors);
                 }
-            });
+
+                // 若不是第一个event，则说明有父亲事件
+                int index = this.hashgraph.get(id).indexOf(chain.get(0));
+                if (index != 0) {
+                    List<Event> neighbors = new ArrayList<>(2);
+                    Event selfParent = this.hashgraph.get(id).get(index-1);
+                    Event otherParent = this.eventHashMap.get(chain.get(0).getOtherParentHash());
+                    chain.get(0).setSelfParent(selfParent);
+                    chain.get(0).setOtherParent(otherParent);
+                    neighbors.add(selfParent);
+                    neighbors.add(otherParent);
+                }
+            }
+        });
         return true;
     }
 

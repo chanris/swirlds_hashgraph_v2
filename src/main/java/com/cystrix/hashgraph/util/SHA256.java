@@ -213,8 +213,6 @@ public class SHA256 {
         return UUID.randomUUID().toString().replace("-", "");
     }
 
-
-
     public synchronized  static String toJSONString(Object o) {
         return JSON.toJSONString(o);
     }

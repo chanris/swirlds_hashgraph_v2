@@ -2,10 +2,9 @@ package com.cystrix.hashgraph.net;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
-import com.cystrix.hashgraph.exception.BusinessException;
 import com.cystrix.hashgraph.hashview.Event;
 import com.cystrix.hashgraph.hashview.HashgraphMember;
-import com.cystrix.hashgraph.util.SHA256;
+import com.cystrix.hashgraph.hashview.Transaction;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -28,17 +27,33 @@ public class RequestHandler {
             request.setMapping("/default");
         }
         switch (request.getMapping()) {
+            case "/sendTransaction":
+                sendTransactionMapping(request, response);
+                break;
             case "/shutdown":
                 shutdownMapping(request, response);
                 break;
             case "/pullEvent":
                 pullEventMapping(request, response);
                 break;
-            default:
+            case "/default":
                 defaultMapping(request, response);
+            default:
+                errorMapping(request, response);
                 break;
         }
         return response;
+    }
+
+    private void sendTransactionMapping(Request request, Response response) {
+        String json = request.getData();
+        Transaction transaction = JSONObject.parseObject(json, Transaction.class);
+        List<Transaction> waitForPackEventList = this.hashgraphMember.getWaitForPackEventList();
+        synchronized (this.hashgraphMember.getLock()) {
+            waitForPackEventList.add(transaction);
+        }
+        response.setCode(200);
+        response.setMessage("SUCCESS");
     }
 
     // shared variables：  this.hashgraphMember.getHashgraph():ConcurrentHashMap(Integer, List<Event>)
@@ -105,6 +120,11 @@ public class RequestHandler {
         response.setCode(200);
         response.setMessage("SUCCESS");
         response.setData("server received this message: " + request.getData());
+    }
+
+    private void errorMapping(Request request, Response response) {
+        response.setCode(400);
+        response.setMessage("未找到路径");
     }
 
     private void shutdownMapping(Request request, Response response) {

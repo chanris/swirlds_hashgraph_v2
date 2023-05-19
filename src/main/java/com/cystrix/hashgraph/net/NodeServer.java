@@ -6,6 +6,7 @@ import com.alibaba.fastjson2.TypeReference;
 import com.cystrix.hashgraph.exception.BusinessException;
 import com.cystrix.hashgraph.hashview.Event;
 import com.cystrix.hashgraph.hashview.HashgraphMember;
+import com.cystrix.hashgraph.hashview.Transaction;
 import com.cystrix.hashgraph.util.SHA256;
 import lombok.extern.slf4j.Slf4j;
 
@@ -28,6 +29,7 @@ public class NodeServer {
     private ExecutorService executor;
     private int threadNum; // 线程池数量
     private HashgraphMember hashgraphMember;
+
 
     public NodeServer(int port, int threadNum, HashgraphMember hashgraphMember) {
         this.port = port;
@@ -102,13 +104,21 @@ public class NodeServer {
                             return super.parseObject(text);
                         }
                     });
-                    this.hashgraphMember.addEventBatch(subEventListMap);
+                    boolean resultSign = this.hashgraphMember.addEventBatch(subEventListMap);
                     int nodeId = this.hashgraphMember.getId();
-                    // 创建新事件，打包目前接收到的交易
+                    // 创建新事件
                     Event event = packNewEvent(nodeId, receiverId);
+                    // 打包目前接收到的交易
+                    packTransactionList(event);
 
                     // for search parent hash
                     this.hashgraphMember.getEventHashMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
+
+
+
+
+
+
                     //log.info("node_id:{} request node_id:{} gossip communication success!", this.hashgraphMember.getId(), receiverId);
                     //log.info("node_Id:{} hashgraph replicas: {}", this.hashgraphMember.getId(), this.hashgraphMember.getHashgraph().get(0));
                     /*if (nodeId == 0) {
@@ -156,6 +166,19 @@ public class NodeServer {
             throw new BusinessException(e);
         }
 
+    }
+
+    private synchronized void packTransactionList(Event newEvent) {
+        int maxTxNum = 10;
+        ArrayList<Transaction> packTransactionList = new ArrayList<>(maxTxNum);
+        List<Transaction> txList = this.hashgraphMember.getWaitForPackEventList();
+        int size = txList.size();
+        maxTxNum = Math.min(size, maxTxNum);
+        for (int i = 0; i < maxTxNum; i++) {
+            packTransactionList.add(txList.get(i));
+        }
+        txList.removeAll(packTransactionList);
+        newEvent.setTransactionList(packTransactionList);
     }
 
 }
