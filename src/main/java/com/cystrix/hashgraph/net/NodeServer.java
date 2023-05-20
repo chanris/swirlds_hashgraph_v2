@@ -72,7 +72,7 @@ public class NodeServer {
         while (!shutdown) {
             // 间隔 100 ~ 150 ms 发起一次通信
             int time = new Random(System.currentTimeMillis() / (this.hashgraphMember.getId() + 1)
-                    + this.hashgraphMember.getId() * 100).nextInt(1000) + 500;
+                    + this.hashgraphMember.getId() * 100).nextInt(5000) + 100;
             TimeUnit.MILLISECONDS.sleep(time);
 
             // 选择邻居节点
@@ -108,28 +108,22 @@ public class NodeServer {
                     int nodeId = this.hashgraphMember.getId();
                     // 创建新事件
                     Event event = packNewEvent(nodeId, receiverId);
+                    // System.out.println("event"+ event);
                     // 打包目前接收到的交易
-                    packTransactionList(event);
-
+                    //packTransactionList(event);
                     // for search parent hash
                     this.hashgraphMember.getEventHashMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
 
+//                    System.out.println("******************************************************************************************");
+//                    System.out.println("node_id：" + nodeId + " 的hashgraph副本");
+//                    List<Event> events = this.hashgraphMember.getHashgraph().get(0);
+//                    System.out.println(events);
+//
+//                    System.out.println("******************************************************************************************");
 
-
-
-
-
-                    //log.info("node_id:{} request node_id:{} gossip communication success!", this.hashgraphMember.getId(), receiverId);
-                    //log.info("node_Id:{} hashgraph replicas: {}", this.hashgraphMember.getId(), this.hashgraphMember.getHashgraph().get(0));
-                    /*if (nodeId == 0) {
-                         //log.info("node_Id:{} hashgraph replicas: {}", this.hashgraphMember.getId(), this.hashgraphMember.getHashgraph());
-
-                        List<Integer> chainSizeList = new ArrayList<>();
-                        this.hashgraphMember.getHashgraph().forEach((id, c)->{
-                            chainSizeList.add(c.size());
-                        });
-                        log.info("node_Id:{} hashgraph replicas: {}", this.hashgraphMember.getId(), chainSizeList);
-                    }*/
+                     this.hashgraphMember.divideRounds();
+                     this.hashgraphMember.decideFame2();
+                    //this.hashgraphMember.findOrder();
 
                 }else {
                     log.warn("node_id:{} request node_id:{} gossip communication failed!", this.hashgraphMember.getId(), receiverId);
@@ -147,8 +141,11 @@ public class NodeServer {
             int otherId = receiverId;
             List<Event> chain = this.hashgraphMember.getHashgraph().get(nodeId);
             List<Event> otherChain = this.hashgraphMember.getHashgraph().get(otherId);
+            List<Event> neighbors = new ArrayList<>(2);
             Event chainLastEvent = chain.get(chain.size()-1);
             Event otherChainLastEvent = otherChain.get(otherChain.size()-1);
+            neighbors.add(chainLastEvent);
+            neighbors.add(otherChainLastEvent);
             Event event = new Event();
             event.setNodeId(nodeId);
             event.setOtherId(otherId);
@@ -158,6 +155,7 @@ public class NodeServer {
             event.setSelfParent(chainLastEvent);
             event.setOtherParent(otherChainLastEvent);
             event.setPacker(this.hashgraphMember.getPk());
+            event.setNeighbors(neighbors);
             String signature = SHA256.signEvent(event, this.hashgraphMember.getSk());
             event.setSignature(signature);
             chain.add(event);

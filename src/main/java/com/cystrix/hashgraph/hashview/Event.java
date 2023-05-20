@@ -2,11 +2,13 @@ package com.cystrix.hashgraph.hashview;
 
 import com.alibaba.fastjson2.annotation.JSONField;
 import lombok.Data;
+import lombok.ToString;
 
 import java.util.ArrayList;
 import java.util.List;
 
 @Data
+@ToString(of = { "isFamous"})
 public class Event implements Cloneable {
 
     private String packer;  // 公钥信息
@@ -19,8 +21,6 @@ public class Event implements Cloneable {
     // for build DAG-structure
     private Integer nodeId; //成员id
     private Integer otherId; //otherParent node id 冗余信息
-    // private String uuid;
-
 
     // local fields
     @JSONField(serialize = false)
@@ -36,6 +36,8 @@ public class Event implements Cloneable {
     @JSONField(serialize = false)
     private Integer receivedRound;
 
+    @JSONField(serialize = false)
+    private boolean voteRes;
 
     //fields for DFS
     @JSONField(serialize = false)
@@ -60,10 +62,4 @@ public class Event implements Cloneable {
         return clone;
     }
 
-    public String toString() {
-//        return  "{packer:"+packer+",otherParentHash:"+otherParentHash+",selfParentHash:"+selfParentHash + ",transactionList:" + transactionList
-//                +",timestamp:" + timestamp +",signature:" + signature +"}";
-
-        return  "{otherParentHash:"+otherParentHash+"}\n";
-    }
 }

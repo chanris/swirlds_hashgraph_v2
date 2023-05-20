@@ -24,10 +24,12 @@ public class DFS {
             paths.add(new ArrayList<>(path));
         }
 
-        // 递归遍历相邻节点
-        for (Event neighbor : node.getNeighbors()) {
-            if (!neighbor.isVisited()) {
-                findPath(neighbor, target, path, paths);
+        if (node.getNeighbors() != null && node.getNeighbors().size() != 0) {
+            // 递归遍历相邻节点
+            for (Event neighbor : node.getNeighbors()) {
+                if (!neighbor.isVisited()) {
+                    findPath(neighbor, target, path, paths);
+                }
             }
         }
 
@@ -43,16 +45,18 @@ public class DFS {
         if (startNode == targetNode) {
             return true;
         }
-        // 递归遍历相邻节点
-        for (Event neighbor : startNode.getNeighbors()) {
-            if (!neighbor.isVisited()) {
-                boolean found = findPath(neighbor, targetNode, path);
-                if (found) {
-                    return true;
+
+        if (startNode.getNeighbors() != null) {
+            // 递归遍历相邻节点
+            for (Event neighbor : startNode.getNeighbors()) {
+                if (!neighbor.isVisited()) {
+                    boolean found = findPath(neighbor, targetNode, path);
+                    if (found) {
+                        return true;
+                    }
                 }
             }
         }
-
         // 回溯，移除当前节点
         path.remove(path.size() - 1);
         return false;

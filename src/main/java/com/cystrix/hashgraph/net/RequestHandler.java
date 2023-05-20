@@ -15,7 +15,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class RequestHandler {
 
     private HashgraphMember hashgraphMember;
-
     public RequestHandler(HashgraphMember hashgraphMember) {
         this.hashgraphMember = hashgraphMember;
     }
@@ -69,9 +68,7 @@ public class RequestHandler {
             response.setData("request parameter error: "+ request.getData());
             return;
         }
-
         generatePullEvents(hashMap, response);
-
         response.setCode(200);
         response.setMessage("SUCCESS");
     }
