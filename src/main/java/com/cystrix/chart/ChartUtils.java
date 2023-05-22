@@ -20,10 +20,8 @@ public class ChartUtils {
 
         XYSeries series = new XYSeries("Hashgraph TPS Trend Chart");
         series.setMaximumItemCount(10000);
-
         XYSeriesCollection dataset = new XYSeriesCollection();
         dataset.addSeries(series);
-
         JFreeChart chart = ChartFactory.createXYLineChart(
                 "TPS Trend Chart",
                 "time",
@@ -47,10 +45,8 @@ public class ChartUtils {
                 hashgraph.forEach((id, chain)->{
                     y.set(chain.size() * 10 + y.get() + snapshotHeight.get(id) * 10);
                 });
-
                 // 添加新的数据点到曲线中
                 series.add(x, y);
-
                 // 重新绘制图表
                 frame.repaint();
             }
@@ -60,5 +56,4 @@ public class ChartUtils {
         Timer timer = new Timer();
         timer.schedule(task, 0, INTERVAL);
     }
-
 }
