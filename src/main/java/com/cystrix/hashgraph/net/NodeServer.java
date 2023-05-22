@@ -16,12 +16,10 @@ import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 
 @Slf4j
@@ -32,7 +30,6 @@ public class NodeServer {
     private ExecutorService executor;
     private int threadNum; // 线程池数量
     private HashgraphMember hashgraphMember;
-
 
     public NodeServer(int port, int threadNum, HashgraphMember hashgraphMember) {
         this.port = port;
@@ -70,14 +67,6 @@ public class NodeServer {
             }
         }, "node_" + port + "_gossip_sync_thread").start();
 
-//        new Thread(()->{
-//            try {
-//                snapshot();
-//            } catch (InterruptedException e) {
-//                throw new BusinessException(e);
-//            }
-//        }, "node_"+port+"_gossip_sync_thread").start();
-
 
         new Thread(()->{
 
@@ -95,14 +84,14 @@ public class NodeServer {
             System.out.println("************************************************");
             System.out.println("system throughput is: "+ ((gapCount.get() * 10) / 5));
             System.out.println("************************************************");
-        }, "node_"+port+"_test_throughput_thread").start();
+        }, "node_"+port+"_test_throughput_thread")/*.start()*/;
     }
 
     private void gossipSync() throws Exception{
         while (!shutdown) {
             // 间隔 100 ~ 150 ms 发起一次通信
             int time = new Random(System.currentTimeMillis() / (this.hashgraphMember.getId() + 1)
-                    + this.hashgraphMember.getId() * 100).nextInt(5000) + 100;
+                    + this.hashgraphMember.getId() * 100).nextInt(1000) + 500;
             TimeUnit.MILLISECONDS.sleep(time);
 
             // 选择邻居节点
@@ -144,16 +133,10 @@ public class NodeServer {
                     // for search parent hash
                     this.hashgraphMember.getEventHashMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
 
-//                    System.out.println("******************************************************************************************");
-//                    System.out.println("node_id：" + nodeId + " 的hashgraph副本");
-//                    List<Event> events = this.hashgraphMember.getHashgraph().get(0);
-//                    System.out.println(events);
-//
-//                    System.out.println("******************************************************************************************");
-
                      this.hashgraphMember.divideRounds();
-                     //this.hashgraphMember.decideFame2();
+                     this.hashgraphMember.decideFame();
                     //this.hashgraphMember.findOrder();
+                    this.snapshot();
 
                 }else {
                     log.warn("node_id:{} request node_id:{} gossip communication failed!", this.hashgraphMember.getId(), receiverId);
@@ -219,50 +202,60 @@ public class NodeServer {
     // 削减Hashgraph的大小
     // 如果一个轮次之前的所有事件的consensusTimestamp全部被确定，那么就可以从Hashgraph上剪掉
     private void snapshot() throws InterruptedException {
-        while (!shutdown) {
-            int idleTime = 2 * 1000;
-            TimeUnit.MILLISECONDS.sleep(idleTime);
-            int size1 = this.hashgraphMember.getWitnessMap().keySet().size();
-            if (size1 < 4) {
-                continue;
-            }
+        // 如果轮次次数大于等于6，那么开始削减Hashgraph的大小
+        int size1 = this.hashgraphMember.getWitnessMap().keySet().size();
+        if (size1 < 6) {
+            return;
+        }
 
-            ArrayList<Event> removeSubEventList = new ArrayList<>();
-            List<Integer> rounds = new ArrayList<>(this.hashgraphMember.getWitnessMap().keySet());
-            Collections.sort(rounds);
-            int i;
-            if (rounds.size() > 2) {
-                i = rounds.get(2);
-            }else {
+        // 获得次最小的round编号
+        List<Integer> rounds = new ArrayList<>(this.hashgraphMember.getWitnessMap().keySet());
+        Collections.sort(rounds);
+        int r = rounds.get(1);
+        //todo 判断次最小轮次的全部祖先事件是否最终定序，如果为true, 那么从内存中删除全部祖先事件。持久化磁盘中。
+        List<Event> witnessList = this.hashgraphMember.getWitnessMap().get(r);
+        for (int n = 0; n < this.hashgraphMember.getNumNodes(); n++) {
+            Event event = witnessList.get(n);
+            if (!isAllEventFindOrder(event)) {
                 return;
-            }
-            List<Event> witnessList = this.hashgraphMember.getWitnessMap().get(i);
-            for (int n = 0; n < this.hashgraphMember.getNumNodes(); n++) {
-                Event event = witnessList.get(n);
-                if (!isAllEventFindOrder(event)) {
-                    return;
-                }
-            }
-
-            int size = witnessList.size();
-            if (size == this.hashgraphMember.getNumNodes()) {
-                List<List<Event>> values = this.hashgraphMember.getHashgraph().values().stream().collect(Collectors.toList());;
-                for (int j = 0; j < size; j++) {
-                    List<Event> events = values.get(j);
-                    synchronized (events) {
-                        for (Event e : events) {
-                            if (e == witnessList.get(j)) {
-                                break;
-                            }else {
-                                removeSubEventList.add(e);
-                            }
-                        }
-                        events.removeAll(removeSubEventList);
-                    }
-                }
             }
         }
 
+        int size = witnessList.size();
+        if (size == this.hashgraphMember.getNumNodes()) {
+            ArrayList<Event> removeSubEventList = new ArrayList<>();
+            this.hashgraphMember.getHashgraph().forEach((id, chain)->{
+                witnessList.sort(Comparator.comparingInt(Event::getNodeId));
+                Iterator<Map.Entry<String, Event>> iterator = this.hashgraphMember.getEventHashMap().entrySet().iterator();
+                for (Event e : chain) {
+                    while (iterator.hasNext()) {
+                        Map.Entry<String, Event> entry = iterator.next();
+                        if (entry.getValue().equals(e)) {
+                            iterator.remove();
+                        }
+                    }
+                    if (e == witnessList.get(id)) {
+                        break;
+                    } else {
+                        removeSubEventList.add(e);
+                    }
+                }
+                // hashgraph：HashMap<Integer,List<Event>> 中删除事件
+                chain.removeAll(removeSubEventList);
+                removeSubEventList.clear();
+            });
+
+
+
+            // witnessMap<Integer,List<Event>> 中删除最小轮次的见证人列表
+            this.hashgraphMember.getWitnessMap().remove(r-1);
+            // 并将次最小轮次的见证人 的selfParent和otherParent引用设为null
+            for (Event witness : witnessList) {
+                witness.setSelfParent(null);
+                witness.setOtherParent(null);
+                witness.setNeighbors(null);
+            }
+        }
     }
 
     /**

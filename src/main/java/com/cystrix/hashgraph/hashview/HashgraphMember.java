@@ -32,7 +32,7 @@ public class HashgraphMember {
 
     private Integer maxRound = 0;
     private int coinRound = 10;
-    private Object lock = new Object();
+    private final Object lock = new Object();
 
     public String getPk() {
         return this.PK;
@@ -68,41 +68,15 @@ public class HashgraphMember {
         }
     }
 
-    @Deprecated
-    public synchronized boolean addEvent(Event event) {
-        List<Event> events = hashgraph.get(event.getNodeId());
-        if (events != null) {
-            if (events.size() != 0) {
-                Event lastParentEvent = events.get(events.size()-1);
-                if (lastParentEvent != event.getSelfParent()) {
-                    return false;
-                }
-                Event otherParentEvent = event.getOtherParent();
-                Integer nodeId = otherParentEvent.getNodeId();
-                int otherChainSize = hashgraph.get(nodeId).size();
-                if (hashgraph.get(nodeId).get(otherChainSize - 1) != otherParentEvent) {
-                    return false;
-                }
-                events.add(event);
-            }else {
-                events.add(event);
-            }
-        }
-        return true;
-    }
-
     // todo 没有考虑拜占庭节点行为
-    public synchronized boolean addEventBatch(HashMap<Integer, List<Event>> subHashgraph) {
-        this.hashgraph.forEach((id, chain)->{
-            if (subHashgraph.containsKey(id)) {
-                List<Event> subChain = subHashgraph.get(id);
-                chain.addAll(subChain);
-                for (Event e: subChain) {
-                    try {
-                        this.eventHashMap.put(SHA256.sha256HexString(JSON.toJSONString(e)), e);
-                    }catch (Exception ex) {
-                        ex.printStackTrace();
-                    }
+    public boolean addEventBatch(HashMap<Integer, List<Event>> subHashgraph) {
+        subHashgraph.forEach((id, subChain)->{
+            this.hashgraph.get(id).addAll(subChain);
+            for (Event e: subChain) {
+                try {
+                    this.eventHashMap.put(SHA256.sha256HexString(JSON.toJSONString(e)), e);
+                }catch (Exception ex) {
+                    ex.printStackTrace();
                 }
             }
         });
@@ -143,14 +117,14 @@ public class HashgraphMember {
 
 
     public void divideRounds() {
-        // this.witnessMap.clear();
-        AtomicInteger maxLen = new AtomicInteger(Integer.MIN_VALUE);
+        AtomicInteger maxLen = new AtomicInteger(0);
         List<Integer> chainSizeList = new ArrayList<>(this.numNodes);
         // 获得当前最长链长度，并记录每条链的长度
         this.getHashgraph().forEach((id, chain)->{
             maxLen.set(Math.max(chain.size(), maxLen.get()));
             chainSizeList.add(chain.size());
         });
+
         // 层次遍历hashgraph，确定每个事件的轮次
         for (int i = 0; i < maxLen.get(); i++) {
             for (int j = 0; j < this.numNodes; j++) {
@@ -175,13 +149,11 @@ public class HashgraphMember {
                             throw new BusinessException("自父亲事件的创建轮次不能为空");
                         }
                         AtomicInteger vote = new AtomicInteger(0);
-
                         this.witnessMap.get(r).forEach(witness->{
                             if (isStronglySee(e, witness)) {
                                 vote.getAndIncrement();
                             }
                         });
-
                         if (vote.get() > (2 * numNodes / 3)) {
                             e.setIsWitness(true);
                             e.setCreatedRound(r+1);
@@ -210,74 +182,6 @@ public class HashgraphMember {
     }
 
     public void decideFame() {
-        // 遍历每轮的见证人
-        this.witnessMap.forEach((r, witnessList)->{
-            // 该见证人之后存在两轮才能被投票和计票
-            if (this.witnessMap.containsKey(r+2)) {
-                AtomicInteger voteYes = new AtomicInteger();
-                AtomicInteger voteNo = new AtomicInteger();
-                List<Event> voteEventList = this.witnessMap.get(r+1);       // 投票轮见证人
-                List<Event> countVoteEventList = this.witnessMap.get(r+2);  // 计票轮见证人
-
-                // 对候选轮的见证人 进行虚拟投票和计票
-                for (Event event : witnessList) {
-                    // 投票轮见证人 对 候选轮的某个候选见证人投票，并由计票轮见证人 计票
-                    for (int i = 0; i < countVoteEventList.size(); i++) {
-                        if (voteEventList.get(0).getCreatedRound() % coinRound != 0) {
-                            for (int k = 0; k < voteEventList.size(); k++) {
-                                if (isSee(voteEventList.get(k), event) && isStronglySee(countVoteEventList.get(i), voteEventList.get(k))) {
-                                    voteYes.incrementAndGet();
-                                }
-                                try {
-                                    if (!isSee(voteEventList.get(k), event) && isStronglySee(countVoteEventList.get(i), voteEventList.get(k))) {
-                                        voteNo.incrementAndGet();
-                                    }
-                                }catch (Exception e) {
-                                    e.printStackTrace();
-                                    throw new BusinessException(e.getMessage());
-                                }
-                            }
-                            // 超过2/3的见证人都强可见该事件，则该见证人著名
-                            if (voteYes.get() > (2 * this.numNodes / 3)) {
-                                event.setIsFamous(true);
-                                break;
-                                // 超过2/3的见证人都不强可见该事件，则该见证人不著名
-                            }else if (voteNo.get() > (2 * this.numNodes / 3)) {
-                                event.setIsFamous(false);
-                                break;
-                            }
-                        }
-
-                    }
-
-                    if (event.getIsFamous() == null) {
-                        // 在r的后两轮无法确定 见证人的声望
-                        // 在r之后的第一个coin round 进行投票， 然后在 coin round后一轮进行选举
-                        // cr = 15  coinRound = 20  =  cr / 10 * 10
-                        while (true) {
-                            int createdRound = event.getCreatedRound();
-                            int coinRound;
-                            if (createdRound % 10 == 0) {
-                                coinRound = createdRound + 10;
-                            }else {
-                                coinRound = createdRound / 10 * 10 + 10;
-                            }
-                            if (maxRound > coinRound) {
-
-                            }else {
-                                break;
-                            }
-                        }
-
-                    }
-
-                }
-            }
-        });
-
-    }
-
-    public void decideFame2() {
         // 遍历每轮的见证人
         List<Event> eventList = new ArrayList<>();
         for (List<Event> events: this.getWitnessMap().values()) {
@@ -319,7 +223,7 @@ public class HashgraphMember {
             }
            }
         }
-        System.out.println("======================================================================================");
+        System.out.println("============================================================================================================================================================");
         System.out.println(this.witnessMap);
     }
 
@@ -339,28 +243,6 @@ public class HashgraphMember {
         int len = sign.length;
         int i = sign[len / 2] & 0b00001000;
         return i != 0;
-    }
-
-
-    // v <- majority vote in s (is TRUE for a tie)
-    private boolean getMajoritySuggestion(Event x, List<Event> witnessList, AtomicInteger voteNum) {
-        AtomicInteger voteYes  = new AtomicInteger(0);
-        AtomicInteger voteNo  = new AtomicInteger(0);
-
-        witnessList.forEach(witness->{
-            if (isSee(witness, x)) {
-                voteYes.getAndIncrement();
-            }else {
-                voteNo.getAndIncrement();
-            }
-        });
-        if (voteYes.get() >= voteNo.get()) {
-            voteNum.set(voteYes.get());
-            return true;
-        }else {
-            voteNum.set(voteNo.get());
-            return false;
-        }
     }
 
 
