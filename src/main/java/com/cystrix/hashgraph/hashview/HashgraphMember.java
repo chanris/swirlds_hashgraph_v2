@@ -32,6 +32,7 @@ public class HashgraphMember {
 
     private Integer maxRound = 0;
     private int coinRound = 10;
+    private ConcurrentHashMap<Integer, Integer> snapshotHeightMap;
     private final Object lock = new Object();
 
     public String getPk() {
@@ -47,10 +48,12 @@ public class HashgraphMember {
         this.hashgraph = new ConcurrentHashMap<>();
         this.eventHashMap = new ConcurrentHashMap<>();
         this.witnessMap = new ConcurrentHashMap<>();
+        this.snapshotHeightMap = new ConcurrentHashMap<>();
         this.waitForPackEventList = new ArrayList<>();
         for (int i = 0; i < this.numNodes; i++) {
             List<Event> chain = new ArrayList<>();
             this.hashgraph.put(i,chain);
+            this.snapshotHeightMap.put(i, 0);
         }
         // 初始化第一个事件
         Event e = new Event();
@@ -223,8 +226,6 @@ public class HashgraphMember {
             }
            }
         }
-        System.out.println("============================================================================================================================================================");
-        System.out.println(this.witnessMap);
     }
 
     private List<Event> filterWitnessList(Event y, List<Event> witnessList) {
@@ -244,7 +245,6 @@ public class HashgraphMember {
         int i = sign[len / 2] & 0b00001000;
         return i != 0;
     }
-
 
     private boolean getMajorityVote(List<Event> witnessList, AtomicInteger voteNum) {
         int voteYes = 0;
@@ -282,8 +282,6 @@ public class HashgraphMember {
         // 那么
         //      x的接收轮次就是 r
         //      集合s <- r轮的著名见证人的自祖先z, 并且要求z的自父亲不能是x
-
-
 
     }
 

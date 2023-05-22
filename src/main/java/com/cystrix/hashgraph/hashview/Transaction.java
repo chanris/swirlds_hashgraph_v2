@@ -10,6 +10,7 @@ public class Transaction implements Cloneable{
     private Long balance;  // 使用最小单位 1 CY  = 10^18 yue
     private String extra;
     private String signature;
+    private Long timestamp;
 
     public Transaction clone() {
         Transaction transaction;

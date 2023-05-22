@@ -3,6 +3,7 @@ package com.cystrix.hashgraph.net;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.alibaba.fastjson2.TypeReference;
+import com.cystrix.chart.ChartUtils;
 import com.cystrix.hashgraph.exception.BusinessException;
 import com.cystrix.hashgraph.hashview.Event;
 import com.cystrix.hashgraph.hashview.HashgraphMember;
@@ -67,31 +68,16 @@ public class NodeServer {
             }
         }, "node_" + port + "_gossip_sync_thread").start();
 
-
-        new Thread(()->{
-
-            HashMap<Integer, Integer> height1Map =  getHashgraphHeight();
-            try {
-                TimeUnit.MILLISECONDS.sleep(10 * 1000);
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-            HashMap<Integer, Integer> height2Map = getHashgraphHeight();
-            AtomicInteger gapCount = new AtomicInteger(0);
-            height1Map.forEach((id, size)->{
-                gapCount.addAndGet(height2Map.get(id) - size);
-            });
-            System.out.println("************************************************");
-            System.out.println("system throughput is: "+ ((gapCount.get() * 10) / 5));
-            System.out.println("************************************************");
-        }, "node_"+port+"_test_throughput_thread")/*.start()*/;
+        if (this.hashgraphMember.getId() == 0) {
+            ChartUtils.showTPS(this.hashgraphMember.getHashgraph(), this.hashgraphMember.getSnapshotHeightMap());
+        }
     }
 
     private void gossipSync() throws Exception{
         while (!shutdown) {
-            // 间隔 100 ~ 150 ms 发起一次通信
+            // 间隔 1 ~ 1.5s 发起一次通信
             int time = new Random(System.currentTimeMillis() / (this.hashgraphMember.getId() + 1)
-                    + this.hashgraphMember.getId() * 100).nextInt(1000) + 500;
+                    + this.hashgraphMember.getId() * 1000).nextInt(700) + 300;
             TimeUnit.MILLISECONDS.sleep(time);
 
             // 选择邻居节点
@@ -109,7 +95,8 @@ public class NodeServer {
                 request.setMapping("/pullEvent");
                 Map<Integer, Integer> hashgraphHeightMap = new HashMap<>();
                 this.hashgraphMember.getHashgraph().forEach((id, chain)->{
-                    hashgraphHeightMap.put(id, chain.size());
+                    int n = this.hashgraphMember.getSnapshotHeightMap().get(id);
+                    hashgraphHeightMap.put(id, n + chain.size());
                 });
                 request.setData(JSONObject.toJSONString(hashgraphHeightMap));
                 writer.println(RequestHandler.requestObject2JsonString(request));
@@ -127,9 +114,10 @@ public class NodeServer {
                     int nodeId = this.hashgraphMember.getId();
                     // 创建新事件
                     Event event = packNewEvent(nodeId, receiverId);
-                    // System.out.println("event"+ event);
+
                     // 打包目前接收到的交易
-                    // packTransactionList(event);
+//                     packTransactionList(event);
+                    packTransactionListMock(event);
                     // for search parent hash
                     this.hashgraphMember.getEventHashMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
 
@@ -198,10 +186,24 @@ public class NodeServer {
         }
     }
 
+    private void packTransactionListMock(Event newEvent) {
+        ArrayList<Transaction> packTransactionList = new ArrayList<>(10);
+        for (int i = 0; i < 10; i++) {
+            Transaction transaction = new Transaction();
+            transaction.setSender(hashgraphMember.getPk());
+            transaction.setSignature(SHA256.signTransaction(transaction, this.hashgraphMember.getSk()));
+            transaction.setBalance(1000L);
+            transaction.setTimestamp(System.currentTimeMillis());
+            transaction.setReceiver(hashgraphMember.getPk());
+            packTransactionList.add(transaction);
+        }
+        newEvent.setTransactionList(packTransactionList);
+    }
+
     /// 存储冗余
     // 削减Hashgraph的大小
     // 如果一个轮次之前的所有事件的consensusTimestamp全部被确定，那么就可以从Hashgraph上剪掉
-    private void snapshot() throws InterruptedException {
+    private void snapshot() {
         // 如果轮次次数大于等于6，那么开始削减Hashgraph的大小
         int size1 = this.hashgraphMember.getWitnessMap().keySet().size();
         if (size1 < 6) {
@@ -242,10 +244,10 @@ public class NodeServer {
                 }
                 // hashgraph：HashMap<Integer,List<Event>> 中删除事件
                 chain.removeAll(removeSubEventList);
+                int n = this.hashgraphMember.getSnapshotHeightMap().get(id) + removeSubEventList.size();
+                this.hashgraphMember.getSnapshotHeightMap().put(id, n);
                 removeSubEventList.clear();
             });
-
-
 
             // witnessMap<Integer,List<Event>> 中删除最小轮次的见证人列表
             this.hashgraphMember.getWitnessMap().remove(r-1);
@@ -272,7 +274,6 @@ public class NodeServer {
         }*/
         return true;
     }
-
 
     private HashMap<Integer,Integer> getHashgraphHeight() {
         HashMap<Integer, Integer> hash = new HashMap<>(this.hashgraphMember.getNumNodes());

@@ -20,7 +20,7 @@ public class SHA256 {
         _Event e = new _Event(event);
         String s = JSONObject.toJSONString(e);
         byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
-        ECGenParameterSpec ecSpec = new ECGenParameterSpec("secp256k1");
+
         try {
             PrivateKey privateKey = parsePrivateKey(skBase64Encoded);
             // 创建签名对象
@@ -32,8 +32,26 @@ public class SHA256 {
             byte[] signature = ecdsaSign.sign();
             return Base64.getEncoder().encodeToString(signature);
         }catch (Exception ex) {
-            ex.printStackTrace();
             throw new BusinessException(ex);
+        }
+    }
+
+
+    public static String signTransaction(Transaction tx, String skBase64Encoded) throws BusinessException {
+        _Transaction transaction = new _Transaction(tx);
+        byte[] bytes =  JSONObject.toJSONString(transaction).getBytes(StandardCharsets.UTF_8);
+        try {
+            PrivateKey privateKey = parsePrivateKey(skBase64Encoded);
+            // 创建签名对象
+            Signature ecdsaSign = Signature.getInstance("SHA256withECDSA");
+
+            ecdsaSign.initSign(privateKey);
+            ecdsaSign.update(bytes);
+
+            byte[] signature = ecdsaSign.sign();
+            return Base64.getEncoder().encodeToString(signature);
+        }catch (Exception ex) {
+            throw new BusinessException();
         }
     }
 
@@ -55,6 +73,71 @@ public class SHA256 {
         }
     }
 
+    private static class _Transaction {
+        private String sender; // pkBase64Encoded
+        private String receiver;
+        private Long balance;
+        private Long timestamp;
+        private String extra;
+
+        private String signature;
+
+        public _Transaction(Transaction tx) {
+            this.sender = tx.getSender();
+            this.receiver = tx.getReceiver();
+            this.balance = tx.getBalance();
+            this.timestamp = tx.getTimestamp();
+            this.extra = tx.getExtra();
+        }
+
+        public String getSender() {
+            return sender;
+        }
+
+        public void setSender(String sender) {
+            this.sender = sender;
+        }
+
+        public String getReceiver() {
+            return receiver;
+        }
+
+        public void setReceiver(String receiver) {
+            this.receiver = receiver;
+        }
+
+        public Long getBalance() {
+            return balance;
+        }
+
+        public void setBalance(Long balance) {
+            this.balance = balance;
+        }
+
+        public Long getTimestamp() {
+            return timestamp;
+        }
+
+        public void setTimestamp(Long timestamp) {
+            this.timestamp = timestamp;
+        }
+
+        public String getExtra() {
+            return extra;
+        }
+
+        public void setExtra(String extra) {
+            this.extra = extra;
+        }
+
+        public String getSignature() {
+            return signature;
+        }
+
+        public void setSignature(String signature) {
+            this.signature = signature;
+        }
+    }
     private static class _Event {
         private String packer; // pkBase64Encoded
         private String otherParentHash;

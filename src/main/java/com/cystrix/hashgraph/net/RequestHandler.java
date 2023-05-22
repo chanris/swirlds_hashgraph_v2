@@ -130,17 +130,20 @@ public class RequestHandler {
         response.setMessage("SUCCESS");
     }
 
-    private /*synchronized*/ void generatePullEvents( HashMap<Integer, Integer> hashMap, Response response) {
+    private /*synchronized*/ void generatePullEvents(HashMap<Integer, Integer> hashMap, Response response) {
         ConcurrentHashMap<Integer, List<Event>> subEventList = new ConcurrentHashMap<>();
         for (Map.Entry<Integer, List<Event>> entry : this.hashgraphMember.getHashgraph().entrySet()) {
             Integer id = entry.getKey();
             List<Event> chain = entry.getValue();
-            int my_size = chain.size();
+            int n = this.hashgraphMember.getSnapshotHeightMap().get(id);
+            // 历史长度
+            int my_size = chain.size() + n;
             int guest_size = hashMap.get(id);
             if (my_size > guest_size) {
 //                subEventList.put(id, chain.subList(guest_size, my_size));  !!!!! 巨坑： watch out ! 会引发并发问题T_T T_T
-                List<Event> c = new ArrayList<>(chain.size());
-                for (int i = guest_size; i < my_size; i++) {
+                int gap = my_size - guest_size;
+                List<Event> c = new ArrayList<>(gap);
+                for (int i = chain.size()-gap; i < chain.size(); i++) {
                     c.add(chain.get(i));
                 }
                 subEventList.put(id, c);
