@@ -16,9 +16,12 @@ import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 
 @Slf4j
@@ -66,6 +69,33 @@ public class NodeServer {
                 throw new BusinessException(e);
             }
         }, "node_" + port + "_gossip_sync_thread").start();
+
+//        new Thread(()->{
+//            try {
+//                snapshot();
+//            } catch (InterruptedException e) {
+//                throw new BusinessException(e);
+//            }
+//        }, "node_"+port+"_gossip_sync_thread").start();
+
+
+        new Thread(()->{
+
+            HashMap<Integer, Integer> height1Map =  getHashgraphHeight();
+            try {
+                TimeUnit.MILLISECONDS.sleep(10 * 1000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            HashMap<Integer, Integer> height2Map = getHashgraphHeight();
+            AtomicInteger gapCount = new AtomicInteger(0);
+            height1Map.forEach((id, size)->{
+                gapCount.addAndGet(height2Map.get(id) - size);
+            });
+            System.out.println("************************************************");
+            System.out.println("system throughput is: "+ ((gapCount.get() * 10) / 5));
+            System.out.println("************************************************");
+        }, "node_"+port+"_test_throughput_thread").start();
     }
 
     private void gossipSync() throws Exception{
@@ -110,7 +140,7 @@ public class NodeServer {
                     Event event = packNewEvent(nodeId, receiverId);
                     // System.out.println("event"+ event);
                     // 打包目前接收到的交易
-                    //packTransactionList(event);
+                    // packTransactionList(event);
                     // for search parent hash
                     this.hashgraphMember.getEventHashMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
 
@@ -122,13 +152,12 @@ public class NodeServer {
 //                    System.out.println("******************************************************************************************");
 
                      this.hashgraphMember.divideRounds();
-                     this.hashgraphMember.decideFame2();
+                     //this.hashgraphMember.decideFame2();
                     //this.hashgraphMember.findOrder();
 
                 }else {
                     log.warn("node_id:{} request node_id:{} gossip communication failed!", this.hashgraphMember.getId(), receiverId);
                 }
-
             }catch (Exception e) {
                 throw new BusinessException(e);
             }
@@ -139,26 +168,31 @@ public class NodeServer {
         try {
             // 创建新事件，打包目前接收到的交易
             int otherId = receiverId;
+
             List<Event> chain = this.hashgraphMember.getHashgraph().get(nodeId);
             List<Event> otherChain = this.hashgraphMember.getHashgraph().get(otherId);
             List<Event> neighbors = new ArrayList<>(2);
-            Event chainLastEvent = chain.get(chain.size()-1);
-            Event otherChainLastEvent = otherChain.get(otherChain.size()-1);
-            neighbors.add(chainLastEvent);
-            neighbors.add(otherChainLastEvent);
             Event event = new Event();
-            event.setNodeId(nodeId);
-            event.setOtherId(otherId);
-            event.setTimestamp(System.currentTimeMillis());
-            event.setSelfParentHash(SHA256.sha256HexString(JSON.toJSONString(chainLastEvent)));
-            event.setOtherParentHash(SHA256.sha256HexString(JSON.toJSONString(otherChainLastEvent)));
-            event.setSelfParent(chainLastEvent);
-            event.setOtherParent(otherChainLastEvent);
-            event.setPacker(this.hashgraphMember.getPk());
-            event.setNeighbors(neighbors);
-            String signature = SHA256.signEvent(event, this.hashgraphMember.getSk());
-            event.setSignature(signature);
-            chain.add(event);
+            synchronized (otherChain) {
+                Event chainLastEvent = chain.get(chain.size()-1);
+                Event otherChainLastEvent = otherChain.get(otherChain.size()-1);
+                neighbors.add(chainLastEvent);
+                neighbors.add(otherChainLastEvent);
+
+                event.setNodeId(nodeId);
+                event.setOtherId(otherId);
+                event.setTimestamp(System.currentTimeMillis());
+                event.setSelfParentHash(SHA256.sha256HexString(JSON.toJSONString(chainLastEvent)));
+                event.setOtherParentHash(SHA256.sha256HexString(JSON.toJSONString(otherChainLastEvent)));
+                event.setSelfParent(chainLastEvent);
+                event.setOtherParent(otherChainLastEvent);
+                event.setPacker(this.hashgraphMember.getPk());
+                event.setNeighbors(neighbors);
+                String signature = SHA256.signEvent(event, this.hashgraphMember.getSk());
+                event.setSignature(signature);
+                chain.add(event);
+            }
+
             return event;
         }catch (Exception e) {
             throw new BusinessException(e);
@@ -172,11 +206,87 @@ public class NodeServer {
         List<Transaction> txList = this.hashgraphMember.getWaitForPackEventList();
         int size = txList.size();
         maxTxNum = Math.min(size, maxTxNum);
-        for (int i = 0; i < maxTxNum; i++) {
-            packTransactionList.add(txList.get(i));
+        if (maxTxNum != 0 ) {
+            for (int i = 0; i < maxTxNum; i++) {
+                packTransactionList.add(txList.get(i));
+            }
+            txList.removeAll(packTransactionList);
+            newEvent.setTransactionList(packTransactionList);
         }
-        txList.removeAll(packTransactionList);
-        newEvent.setTransactionList(packTransactionList);
+    }
+
+    /// 存储冗余
+    // 削减Hashgraph的大小
+    // 如果一个轮次之前的所有事件的consensusTimestamp全部被确定，那么就可以从Hashgraph上剪掉
+    private void snapshot() throws InterruptedException {
+        while (!shutdown) {
+            int idleTime = 2 * 1000;
+            TimeUnit.MILLISECONDS.sleep(idleTime);
+            int size1 = this.hashgraphMember.getWitnessMap().keySet().size();
+            if (size1 < 4) {
+                continue;
+            }
+
+            ArrayList<Event> removeSubEventList = new ArrayList<>();
+            List<Integer> rounds = new ArrayList<>(this.hashgraphMember.getWitnessMap().keySet());
+            Collections.sort(rounds);
+            int i;
+            if (rounds.size() > 2) {
+                i = rounds.get(2);
+            }else {
+                return;
+            }
+            List<Event> witnessList = this.hashgraphMember.getWitnessMap().get(i);
+            for (int n = 0; n < this.hashgraphMember.getNumNodes(); n++) {
+                Event event = witnessList.get(n);
+                if (!isAllEventFindOrder(event)) {
+                    return;
+                }
+            }
+
+            int size = witnessList.size();
+            if (size == this.hashgraphMember.getNumNodes()) {
+                List<List<Event>> values = this.hashgraphMember.getHashgraph().values().stream().collect(Collectors.toList());;
+                for (int j = 0; j < size; j++) {
+                    List<Event> events = values.get(j);
+                    synchronized (events) {
+                        for (Event e : events) {
+                            if (e == witnessList.get(j)) {
+                                break;
+                            }else {
+                                removeSubEventList.add(e);
+                            }
+                        }
+                        events.removeAll(removeSubEventList);
+                    }
+                }
+            }
+        }
+
+    }
+
+    /**
+     * 判断一个 witness event 的自祖先事件是否全部定序
+     * @param witness
+     * @return
+     */
+    private boolean isAllEventFindOrder(Event witness) {
+        /*if (witness.getSelfParent() != null) {
+            if (witness.getSelfParent().getConsensusTimestamp() != null) {
+                boolean b = isAllEventFindOrder(witness.getSelfParent());
+                return b;
+            }
+        }*/
+        return true;
+    }
+
+
+    private HashMap<Integer,Integer> getHashgraphHeight() {
+        HashMap<Integer, Integer> hash = new HashMap<>(this.hashgraphMember.getNumNodes());
+        this.hashgraphMember.getHashgraph().forEach((id, chain)->{
+            hash.put(id, chain.size());
+        });
+        return hash;
     }
 
 }

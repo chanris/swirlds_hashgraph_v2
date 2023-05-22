@@ -35,7 +35,6 @@ public class Event implements Cloneable {
     private Integer createdRound;
     @JSONField(serialize = false)
     private Integer receivedRound;
-
     @JSONField(serialize = false)
     private boolean voteRes;
 

@@ -143,8 +143,7 @@ public class HashgraphMember {
 
 
     public void divideRounds() {
-        this.witnessMap.clear();
-
+        // this.witnessMap.clear();
         AtomicInteger maxLen = new AtomicInteger(Integer.MIN_VALUE);
         List<Integer> chainSizeList = new ArrayList<>(this.numNodes);
         // 获得当前最长链长度，并记录每条链的长度
@@ -158,6 +157,9 @@ public class HashgraphMember {
                 // 若该坐标存在事件，则判断其轮次
                 if (chainSizeList.get(j) > i) {
                     Event e =  this.hashgraph.get(j).get(i);
+                    if (e.getCreatedRound() != null) {
+                        continue;
+                    }
                     Integer r;
                     if (i == 0) {
                         e.setIsWitness(true);
@@ -205,10 +207,6 @@ public class HashgraphMember {
             System.out.println();
         });
         System.out.println("******************************************************************************************\n");*/
-    }
-
-    public void divideRounds2() {
-
     }
 
     public void decideFame() {
@@ -281,53 +279,48 @@ public class HashgraphMember {
 
     public void decideFame2() {
         // 遍历每轮的见证人
-       List<Event> eventList = new ArrayList<>();
+        List<Event> eventList = new ArrayList<>();
         for (List<Event> events: this.getWitnessMap().values()) {
-           for (Event e: events) {
-               eventList.add(e);
+           eventList.addAll(events);
+        }
+
+        for(int i = 0; i < eventList.size(); i ++) {
+            for(int j = 0; j < eventList.size(); j ++) {
+            Event x = eventList.get(i);
+            Event y = eventList.get(j);
+            // if x.witness and y.witness and y.round > x.round
+            if (x.getCreatedRound() < y.getCreatedRound()) {
+                // d <- y.round - x.round
+                int d = y.getCreatedRound() - x.getCreatedRound();
+                // s <- the set of witness events in round y.round - 1 that y can strongly see
+                List<Event>  witness = filterWitnessList(y, this.witnessMap.get(y.getCreatedRound()-1));
+                // v <- majority vote in s  (is TRUE for a tie)
+                // t <- number of events in s with a vote of v
+                AtomicInteger t = new AtomicInteger();
+                boolean v = getMajorityVote(witness, t);
+                if (d == 1) {
+                   // y.vote <- can y see x ?
+                   y.setVoteRes(isSee(y, x));
+                }else {
+                    if ( d % coinRound > 0) {
+                        if (t.get() > (2 * this.numNodes / 3)) {
+                            x.setIsFamous(v);
+                            y.setVoteRes(v);
+                            break;
+                        }
+                    }else {
+                        if (t.get() > (2 * this.numNodes / 3)) {
+                            y.setVoteRes(v);
+                        }else {
+                            y.setVoteRes(voteBySignature(y.getSignature()));
+                        }
+                    }
+                }
+            }
            }
-       }
-       for(int i = 0; i < eventList.size(); i ++) {
-           for(int j = 0; j < eventList.size(); j ++) {
-               Event x = eventList.get(i);
-               Event y = eventList.get(j);
-               // if x.witness and y.witness and y.round > x.round
-               if (x.getCreatedRound() < y.getCreatedRound()) {
-                   // d <- y.round - x.round
-                   int d = y.getCreatedRound() - x.getCreatedRound();
-
-                   // s <- the set of witness events in round y.round - 1 that y can strongly see
-                   List<Event>  witness = filterWitnessList(y, this.witnessMap.get(y.getCreatedRound()-1));
-
-                   // v <- majority vote in s  (is TRUE for a tie)
-                   // t <- number of events in s with a vote of v
-                   AtomicInteger t = new AtomicInteger();
-                   boolean v = getMajorityVote(witness, t);
-
-                   if (d == 1) {
-                       // y.vote <- can y see x ?
-                       y.setVoteRes(isSee(y, x));
-                   }else {
-                       if ( d % coinRound > 0) {
-                          if (t.get() > (2 * this.numNodes / 3)) {
-                              x.setIsFamous(v);
-                              y.setVoteRes(v);
-                              break;
-                          }
-                       }else {
-                           if (t.get() > (2 * this.numNodes / 3)) {
-                               y.setVoteRes(v);
-                           }else {
-                               y.setVoteRes(voteBySignature(y.getSignature()));
-                           }
-                       }
-                   }
-               }
-
-           }
-       }
-       /* System.out.println("======================================================================================");
-        System.out.println(this.witnessMap);*/
+        }
+        System.out.println("======================================================================================");
+        System.out.println(this.witnessMap);
     }
 
     private List<Event> filterWitnessList(Event y, List<Event> witnessList) {
@@ -392,6 +385,23 @@ public class HashgraphMember {
 
 
     public void findOrder() {
+        // if there is a round r such that there is no event y in or before round r that has y.witness=TRUE
+        // and y.famous = UNDECIDED
+        // and x is an ancestor of every round r unique famous witness
+        // and this is not true of any round earlier thant r
+        // then
+        //      x.roundReceived <- r
+        //      s <- set of each event z such that z is a self-ancestor of a round r unique famous witness,
+        //           ,and x is an ancestor of z but not of the self-parent of z
+        //           x.consensusTimestamp <- median of the timestamps of all the events in s
+        // 解释：如果存在一个轮次 r， 如果r 和 r之前轮次的见证人都已经确定 声望
+        // 且 x 是 r轮次的所以著名见证人的祖先
+        // 且 没有 r之前的轮次能够满足以上两个条件
+        // 那么
+        //      x的接收轮次就是 r
+        //      集合s <- r轮的著名见证人的自祖先z, 并且要求z的自父亲不能是x
+
+
 
     }
 
