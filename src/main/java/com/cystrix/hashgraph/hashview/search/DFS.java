@@ -8,10 +8,10 @@ import java.util.List;
 
 public class DFS {
 
-    public static List<List<Event>> findAllPaths(Event node, Event target) {
+    public static List<List<Event>> findAllPaths(Event start, Event target) {
         List<List<Event>> paths = new ArrayList<>();
         List<Event> path = new ArrayList<>();
-        findPath(node, target, path, paths);
+        findPath(start, target, path, paths);
         return paths;
     }
 

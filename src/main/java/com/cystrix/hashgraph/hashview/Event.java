@@ -8,7 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Data
- @ToString(of = { "isFamous"})
+ @ToString(of = { "receivedRound"})
 public class Event implements Cloneable {
 
     private String packer;  // 公钥信息

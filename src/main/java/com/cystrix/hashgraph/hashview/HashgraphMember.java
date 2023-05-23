@@ -1,12 +1,14 @@
 package com.cystrix.hashgraph.hashview;
 
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import com.cystrix.hashgraph.exception.BusinessException;
 import com.cystrix.hashgraph.hashview.search.DFS;
 import com.cystrix.hashgraph.util.SHA256;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -34,6 +36,8 @@ public class HashgraphMember {
     private int coinRound = 10;
     private ConcurrentHashMap<Integer, Integer> snapshotHeightMap;
     private final Object lock = new Object();
+
+    private Integer consensusEventNum = 0;
 
     public String getPk() {
         return this.PK;
@@ -118,6 +122,65 @@ public class HashgraphMember {
         return true;
     }
 
+    /// 存储冗余
+    // 削减Hashgraph的大小
+    // 如果一个轮次之前的所有事件的consensusTimestamp全部被确定，那么就可以从Hashgraph上剪掉
+    public void snapshot() {
+        // 如果轮次次数大于等于6，那么开始削减Hashgraph的大小
+        int size1 = this.getWitnessMap().keySet().size();
+        if (size1 < 5) {
+            return;
+        }
+
+        // 获得次最小的round编号
+        List<Integer> rounds = new ArrayList<>(this.getWitnessMap().keySet());
+        Collections.sort(rounds);
+        int r = rounds.get(1);
+        //todo 判断次最小轮次的全部祖先事件是否最终定序，如果为true, 那么从内存中删除全部祖先事件。持久化磁盘中。
+        List<Event> witnessList = this.getWitnessMap().get(r);
+        for (int n = 0; n < this.getNumNodes(); n++) {
+            Event event = witnessList.get(n);
+            if (!isAllEventFindOrder(event)) {
+                return;
+            }
+        }
+
+        int size = witnessList.size();
+        if (size == this.getNumNodes()) {
+            ArrayList<Event> removeSubEventList = new ArrayList<>();
+            this.getHashgraph().forEach((id, chain)->{
+                witnessList.sort(Comparator.comparingInt(Event::getNodeId));
+                Iterator<Map.Entry<String, Event>> iterator = this.getEventHashMap().entrySet().iterator();
+                for (Event e : chain) {
+                    while (iterator.hasNext()) {
+                        Map.Entry<String, Event> entry = iterator.next();
+                        if (entry.getValue().equals(e)) {
+                            iterator.remove();
+                        }
+                    }
+                    if (e == witnessList.get(id)) {
+                        break;
+                    } else {
+                        removeSubEventList.add(e);
+                    }
+                }
+                // hashgraph：HashMap<Integer,List<Event>> 中删除事件
+                chain.removeAll(removeSubEventList);
+                int n = this.getSnapshotHeightMap().get(id) + removeSubEventList.size();
+                this.getSnapshotHeightMap().put(id, n);
+                removeSubEventList.clear();
+            });
+
+            // witnessMap<Integer,List<Event>> 中删除最小轮次的见证人列表
+            this.getWitnessMap().remove(r-1);
+            // 并将次最小轮次的见证人 的selfParent和otherParent引用设为null
+            for (Event witness : witnessList) {
+                witness.setSelfParent(null);
+                witness.setOtherParent(null);
+                witness.setNeighbors(null);
+            }
+        }
+    }
 
     public void divideRounds() {
         AtomicInteger maxLen = new AtomicInteger(0);
@@ -174,14 +237,6 @@ public class HashgraphMember {
                 }
             }
         }
-       /* System.out.println("******************************************************************************************");
-        System.out.println("node_id：" + this.getId() + " 的witness副本");
-        this.witnessMap.forEach((round, witnessList)->{
-            System.out.print(round+" ");
-            System.out.print(witnessList);
-            System.out.println();
-        });
-        System.out.println("******************************************************************************************\n");*/
     }
 
     public void decideFame() {
@@ -228,6 +283,168 @@ public class HashgraphMember {
         }
     }
 
+    public void findOrder() throws NoSuchAlgorithmException {
+        // if there is a round r such that there is no event y in or before round r that has y.witness=TRUE
+        // and y.famous = UNDECIDED
+        // and x is an ancestor of every round r unique famous witness
+        // and this is not true of any round earlier thant r
+        // then
+        //      x.roundReceived <- r
+        //      s <- set of each event z such that z is a self-ancestor of a round r unique famous witness,
+        //           ,and x is an ancestor of z but not of the self-parent of z
+        //           x.consensusTimestamp <- median of the timestamps of all the events in s
+        // 解释：如果存在一个轮次 r， 如果r 和 r之前轮次的见证人都已经确定 声望
+        // 且 x 是 r轮次的所以著名见证人的祖先
+        // 且 没有 r之前的轮次能够满足以上两个条件
+        // 那么
+        //      x的接收轮次就是 r
+        //      集合s <- r轮的著名见证人的自祖先z, 并且要求z的自父亲不能是x
+        AtomicInteger maxLen = new AtomicInteger(0);
+        List<Integer> chainSizeList = new ArrayList<>(this.numNodes);
+        // 获得当前最长链长度，并记录每条链的长度
+        this.getHashgraph().forEach((id, chain)->{
+            maxLen.set(Math.max(chain.size(), maxLen.get()));
+            chainSizeList.add(chain.size());
+        });
+
+        List<Event> consensusEventList = new ArrayList<>();
+        // 层次遍历hashgraph，确定每个事件的接收轮次
+        for (int i = 0; i < maxLen.get(); i++) {
+            for (int j = 0; j < this.numNodes; j++) {
+                if (chainSizeList.get(j) > i) {
+                    Event e =  this.hashgraph.get(j).get(i);
+                    List<Event> witness = findAllFamousWitnessCanStronglySeeX(e);
+                    if (witness != null) {
+                        //System.out.println("事件" + e+ "找到了接收轮次" + witness);
+                        getConsensusTimestamp(e, witness);
+
+                        // 是否可以在hashgraph 删除该事件 ？
+                        consensusEventList.add(e);
+                    }
+                }
+            }
+        }
+
+        // snapshot
+        for (Event e: consensusEventList) {
+            this.hashgraph.get(e.getNodeId()).remove(e);
+            this.snapshotHeightMap.put(e.getNodeId(), this.snapshotHeightMap.get(e.getNodeId()) + 1);
+            this.eventHashMap.remove(SHA256.sha256HexString(JSONObject.toJSONString(e)));
+            if (e.getIsWitness()) {
+                this.witnessMap.get(e.getCreatedRound()).remove(e);
+            }
+            consensusEventNum += 1;
+        }
+
+       /* if (getId() == 0) {
+            System.out.println("**********************************************************************************************************");
+            System.out.println("node_id:" + getId() + " hashgraph " + this.consensusEventNum);
+            System.out.println("**********************************************************************************************************");
+        }*/
+    }
+
+
+    // ********************************** private method area ***************************************
+    /**
+     * 判断一个 witness event 的自祖先事件是否全部定序
+     * @param witness
+     * @return
+     */
+    private boolean isAllEventFindOrder(Event witness) {
+        /*if (witness.getSelfParent() != null) {
+            if (witness.getSelfParent().getConsensusTimestamp() != null) {
+                boolean b = isAllEventFindOrder(witness.getSelfParent());
+                return b;
+            }
+        }*/
+        return true;
+    }
+    private List<Event> findAllFamousWitnessCanStronglySeeX(Event e) {
+        // 遍历所有的轮次的见证者
+        AtomicInteger targetRound = new AtomicInteger(0);
+        try {
+            this.witnessMap.forEach((r, witnessList)->{
+                boolean flag = true;
+                if (witnessList.size() != this.getNumNodes()) {
+                    flag = false;
+                }else {
+                    for (Event witness:witnessList) {
+                        if (witness.getIsFamous() == null) {
+                            flag = false;
+                            break;
+                        }
+                    }
+                }
+                // 只遍历全部见证人都确定声望的轮次
+                if (flag) {
+                    // 只遍历大于事件e的创建轮次的轮次
+                    if (e.getCreatedRound() < r) {
+
+                        //  如何 判断witnessList是否为e的接收轮次， 并第一次找到接收轮次后就不在进行
+                        for (Event witness : witnessList) {
+                            if (witness.getIsFamous() && !isStronglySee(witness, e)) {
+                                return;
+                            }
+                        }
+                        targetRound.set(r);
+                        throw new BusinessException();
+                    }
+                }
+            });
+        }catch (Exception ex) {}
+        if (targetRound.get() != 0) {
+            e.setReceivedRound(targetRound.get());
+            return this.witnessMap.get(targetRound.get());
+        }
+        return null;
+    }
+
+    /**
+     * @param e 待定序事件
+     * @param witnessList 其接收轮次见证者
+     */
+    private void getConsensusTimestamp(Event e, List<Event> witnessList) {
+        List<Event> s = new ArrayList<>();
+        try {
+            witnessList.forEach(witness->{
+                // 如果是著名见证人则找到 z 事件
+                if (witness.getIsFamous()) {
+                    List<List<Event>> allPaths = DFS.findAllPaths(witness, e);
+                    for (int i = 0; i < allPaths.size(); i++) {
+                        List<Event> path = allPaths.get(i);
+                        if (path.size() > 2) {
+                            /*if (Objects.equals(path.get(path.size() - 2).getNodeId(), witness.getNodeId())) {
+                                s.add(witness);
+                            }*/
+                            int a = s.size();
+                            for (int j = 1; j < path.size()-1; j++) {
+                                if (Objects.equals(path.get(j).getNodeId(), witness.getNodeId())) {
+                                    s.add(witness);
+                                }
+                            }
+                            int b = s.size();
+                            if (a == b) {
+                                s.add(witness);
+                            }
+                        }
+                    }
+                    if (s.size() == 0) {
+                        int x = 0;
+                        throw new RuntimeException("s集合的大小不能为0！");
+                    }
+                }
+
+            });
+
+            s.sort((o1, o2) -> (int)(o1.getTimestamp() - o2.getTimestamp()));
+            Long consensusTimestamp = s.get(s.size() / 2).getTimestamp();
+            e.setConsensusTimestamp(consensusTimestamp);
+        }catch (Exception ex) {
+            throw  new BusinessException(ex);
+        }
+    }
+
+
     private List<Event> filterWitnessList(Event y, List<Event> witnessList) {
         List<Event> targetWitnessList = new ArrayList<>();
         for (int i = 0; i < witnessList.size(); i ++) {
@@ -265,27 +482,6 @@ public class HashgraphMember {
         }
     }
 
-
-    public void findOrder() {
-        // if there is a round r such that there is no event y in or before round r that has y.witness=TRUE
-        // and y.famous = UNDECIDED
-        // and x is an ancestor of every round r unique famous witness
-        // and this is not true of any round earlier thant r
-        // then
-        //      x.roundReceived <- r
-        //      s <- set of each event z such that z is a self-ancestor of a round r unique famous witness,
-        //           ,and x is an ancestor of z but not of the self-parent of z
-        //           x.consensusTimestamp <- median of the timestamps of all the events in s
-        // 解释：如果存在一个轮次 r， 如果r 和 r之前轮次的见证人都已经确定 声望
-        // 且 x 是 r轮次的所以著名见证人的祖先
-        // 且 没有 r之前的轮次能够满足以上两个条件
-        // 那么
-        //      x的接收轮次就是 r
-        //      集合s <- r轮的著名见证人的自祖先z, 并且要求z的自父亲不能是x
-
-    }
-
-
     private boolean isSee(Event src, Event dest) {
         if (src == dest) {
             return true;
@@ -296,7 +492,7 @@ public class HashgraphMember {
 
     private boolean isStronglySee(Event src, Event dest) {
         if (src == dest) {
-            return true;
+            return false;
         }
         cleanVisited();
         Set<Integer> set = new HashSet<>();
@@ -317,4 +513,5 @@ public class HashgraphMember {
     private void cleanVisited() {
         this.hashgraph.forEach((id, chain)-> chain.forEach(e-> e.setVisited(false)));
     }
+
 }

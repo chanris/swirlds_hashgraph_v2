@@ -57,7 +57,7 @@ public class NodeServer {
             }
         },"node_" + port + "_await_request_thread").start();
 
-        new Thread(()->{
+        Thread t1 = new Thread(()->{
             // hashgraph 使用的 八卦协议 拉的方式：即 节点向随机邻居节点发送请求，邻居节点发送哈希图给原节点，
             // 源节点在本地创建新事件，并指向此次通信的邻居节点
             log.info("node_{}_gossip_sync_thread  startup success!", this.hashgraphMember.getId());
@@ -66,22 +66,28 @@ public class NodeServer {
             } catch (Exception e) {
                 throw new BusinessException(e);
             }
-        }, "node_" + port + "_gossip_sync_thread").start();
+        }, "node_" + port + "_gossip_sync_thread");
+        t1.start();
 
         if (this.hashgraphMember.getId() == 0) {
-            ChartUtils.showTPS(this.hashgraphMember.getHashgraph(), this.hashgraphMember.getSnapshotHeightMap());
+            ChartUtils.showTPS(this.hashgraphMember);
         }
+
     }
+
+
 
     private void gossipSync() throws Exception{
         while (!shutdown) {
             // 间隔 1 ~ 1.5s 发起一次通信
-            int time = new Random(System.currentTimeMillis() / (this.hashgraphMember.getId() + 1)
-                    + this.hashgraphMember.getId() * 1000).nextInt(700) + 300;
+            Random r = new Random(System.currentTimeMillis() / (this.hashgraphMember.getId() + 1)
+                    + this.hashgraphMember.getId() * 1000);
+            int time = r.nextInt(1000) + 500;
             TimeUnit.MILLISECONDS.sleep(time);
 
             // 选择邻居节点
-            int receiverId = (int)(Math.random() * this.hashgraphMember.getNumNodes());
+            int receiverId = r.nextInt(Integer.MAX_VALUE);
+            receiverId %= this.hashgraphMember.getNumNodes();
             if (receiverId == this.hashgraphMember.getId()) {
                 receiverId ++;
                 receiverId %= this.hashgraphMember.getNumNodes();
@@ -121,11 +127,17 @@ public class NodeServer {
                     // for search parent hash
                     this.hashgraphMember.getEventHashMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
 
-                     this.hashgraphMember.divideRounds();
-                     this.hashgraphMember.decideFame();
-                    //this.hashgraphMember.findOrder();
-                    this.snapshot();
-
+//                    this.hashgraphMember.divideRounds();
+//                    this.hashgraphMember.decideFame();
+//                    this.hashgraphMember.findOrder();
+//                    this.hashgraphMember.snapshot();
+                   /* if (nodeId == 0) {
+                        List<Integer> height = new ArrayList<>();
+                        for (int i = 0; i < this.hashgraphMember.getNumNodes(); i++) {
+                            height.add(this.hashgraphMember.getHashgraph().get(i).size());
+                        }
+                        System.out.println("node_id: 0" + height);
+                    }*/
                 }else {
                     log.warn("node_id:{} request node_id:{} gossip communication failed!", this.hashgraphMember.getId(), receiverId);
                 }
@@ -200,80 +212,7 @@ public class NodeServer {
         newEvent.setTransactionList(packTransactionList);
     }
 
-    /// 存储冗余
-    // 削减Hashgraph的大小
-    // 如果一个轮次之前的所有事件的consensusTimestamp全部被确定，那么就可以从Hashgraph上剪掉
-    private void snapshot() {
-        // 如果轮次次数大于等于6，那么开始削减Hashgraph的大小
-        int size1 = this.hashgraphMember.getWitnessMap().keySet().size();
-        if (size1 < 6) {
-            return;
-        }
 
-        // 获得次最小的round编号
-        List<Integer> rounds = new ArrayList<>(this.hashgraphMember.getWitnessMap().keySet());
-        Collections.sort(rounds);
-        int r = rounds.get(1);
-        //todo 判断次最小轮次的全部祖先事件是否最终定序，如果为true, 那么从内存中删除全部祖先事件。持久化磁盘中。
-        List<Event> witnessList = this.hashgraphMember.getWitnessMap().get(r);
-        for (int n = 0; n < this.hashgraphMember.getNumNodes(); n++) {
-            Event event = witnessList.get(n);
-            if (!isAllEventFindOrder(event)) {
-                return;
-            }
-        }
-
-        int size = witnessList.size();
-        if (size == this.hashgraphMember.getNumNodes()) {
-            ArrayList<Event> removeSubEventList = new ArrayList<>();
-            this.hashgraphMember.getHashgraph().forEach((id, chain)->{
-                witnessList.sort(Comparator.comparingInt(Event::getNodeId));
-                Iterator<Map.Entry<String, Event>> iterator = this.hashgraphMember.getEventHashMap().entrySet().iterator();
-                for (Event e : chain) {
-                    while (iterator.hasNext()) {
-                        Map.Entry<String, Event> entry = iterator.next();
-                        if (entry.getValue().equals(e)) {
-                            iterator.remove();
-                        }
-                    }
-                    if (e == witnessList.get(id)) {
-                        break;
-                    } else {
-                        removeSubEventList.add(e);
-                    }
-                }
-                // hashgraph：HashMap<Integer,List<Event>> 中删除事件
-                chain.removeAll(removeSubEventList);
-                int n = this.hashgraphMember.getSnapshotHeightMap().get(id) + removeSubEventList.size();
-                this.hashgraphMember.getSnapshotHeightMap().put(id, n);
-                removeSubEventList.clear();
-            });
-
-            // witnessMap<Integer,List<Event>> 中删除最小轮次的见证人列表
-            this.hashgraphMember.getWitnessMap().remove(r-1);
-            // 并将次最小轮次的见证人 的selfParent和otherParent引用设为null
-            for (Event witness : witnessList) {
-                witness.setSelfParent(null);
-                witness.setOtherParent(null);
-                witness.setNeighbors(null);
-            }
-        }
-    }
-
-    /**
-     * 判断一个 witness event 的自祖先事件是否全部定序
-     * @param witness
-     * @return
-     */
-    private boolean isAllEventFindOrder(Event witness) {
-        /*if (witness.getSelfParent() != null) {
-            if (witness.getSelfParent().getConsensusTimestamp() != null) {
-                boolean b = isAllEventFindOrder(witness.getSelfParent());
-                return b;
-            }
-        }*/
-        return true;
-    }
 
     private HashMap<Integer,Integer> getHashgraphHeight() {
         HashMap<Integer, Integer> hash = new HashMap<>(this.hashgraphMember.getNumNodes());
