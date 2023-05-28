@@ -51,12 +51,16 @@ public class ChartUtils {
                 AtomicInteger y = new AtomicInteger(0);
                 AtomicInteger y2 = new AtomicInteger(0);
                 hashgraphMember.getHashgraph().forEach((id, chain)->{
-                    y.set(chain.size() * 10 + y.get() + hashgraphMember.getSnapshotHeightMap().get(id) * 10);
-                    y2.set(hashgraphMember.getConsensusEventNum() * 10);
+                    //y.set(chain.size() * 10 + y.get() + hashgraphMember.getSnapshotHeightMap().get(id) * 10);
+                    if (chain.size() != 0) {
+                        y.set(chain.get(chain.size()-1).getEventId() * 10 + y.get());
+                        //y2.set(hashgraphMember.getConsensusEventNum() * 10);
+                    }
+
                 });
                 // 添加新的数据点到曲线中
                 series1.add(x, y);
-                series2.add(x, y2);
+               // series2.add(x, y2);
                 // 重新绘制图表
                 frame.repaint();
             }

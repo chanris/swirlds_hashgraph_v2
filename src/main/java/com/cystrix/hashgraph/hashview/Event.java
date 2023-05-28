@@ -11,6 +11,7 @@ import java.util.List;
  @ToString(of = { "receivedRound"})
 public class Event implements Cloneable {
 
+    private Integer eventId;
     private String packer;  // 公钥信息
     private String otherParentHash;
     private String selfParentHash;

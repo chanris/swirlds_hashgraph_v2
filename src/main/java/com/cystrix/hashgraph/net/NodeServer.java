@@ -9,6 +9,8 @@ import com.cystrix.hashgraph.hashview.Event;
 import com.cystrix.hashgraph.hashview.HashgraphMember;
 import com.cystrix.hashgraph.hashview.Transaction;
 import com.cystrix.hashgraph.util.SHA256;
+import lombok.Data;
+import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.BufferedReader;
@@ -24,6 +26,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 
 @Slf4j
+@Data
+@ToString(of = {"hashgraphMember"})
 public class NodeServer {
 
     private boolean shutdown = false;
@@ -31,6 +35,8 @@ public class NodeServer {
     private ExecutorService executor;
     private int threadNum; // 线程池数量
     private HashgraphMember hashgraphMember;
+
+    private AtomicInteger trigger = new AtomicInteger(0);
 
     public NodeServer(int port, int threadNum, HashgraphMember hashgraphMember) {
         this.port = port;
@@ -72,17 +78,14 @@ public class NodeServer {
         if (this.hashgraphMember.getId() == 0) {
             ChartUtils.showTPS(this.hashgraphMember);
         }
-
     }
-
-
 
     private void gossipSync() throws Exception{
         while (!shutdown) {
             // 间隔 1 ~ 1.5s 发起一次通信
             Random r = new Random(System.currentTimeMillis() / (this.hashgraphMember.getId() + 1)
                     + this.hashgraphMember.getId() * 1000);
-            int time = r.nextInt(1000) + 500;
+            int time = r.nextInt(700) + 500;
             TimeUnit.MILLISECONDS.sleep(time);
 
             // 选择邻居节点
@@ -101,8 +104,14 @@ public class NodeServer {
                 request.setMapping("/pullEvent");
                 Map<Integer, Integer> hashgraphHeightMap = new HashMap<>();
                 this.hashgraphMember.getHashgraph().forEach((id, chain)->{
-                    int n = this.hashgraphMember.getSnapshotHeightMap().get(id);
-                    hashgraphHeightMap.put(id, n + chain.size());
+                    //int n = this.hashgraphMember.getSnapshotHeightMap().get(id);
+                    //hashgraphHeightMap.put(id, n + chain.size());
+                    if (chain.size() != 0) {
+                        hashgraphHeightMap.put(id, chain.get(chain.size()-1).getEventId());
+                    }else {
+                        hashgraphHeightMap.put(id, 0);
+                    }
+
                 });
                 request.setData(JSONObject.toJSONString(hashgraphHeightMap));
                 writer.println(RequestHandler.requestObject2JsonString(request));
@@ -125,19 +134,19 @@ public class NodeServer {
 //                     packTransactionList(event);
                     packTransactionListMock(event);
                     // for search parent hash
-                    this.hashgraphMember.getEventHashMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
-
+                    this.hashgraphMember.getHashEventMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
 //                    this.hashgraphMember.divideRounds();
 //                    this.hashgraphMember.decideFame();
 //                    this.hashgraphMember.findOrder();
-//                    this.hashgraphMember.snapshot();
-                   /* if (nodeId == 0) {
+
+                    this.hashgraphMember.snapshot();
+                    if (nodeId == 0) {
                         List<Integer> height = new ArrayList<>();
                         for (int i = 0; i < this.hashgraphMember.getNumNodes(); i++) {
                             height.add(this.hashgraphMember.getHashgraph().get(i).size());
                         }
                         System.out.println("node_id: 0" + height);
-                    }*/
+                    }
                 }else {
                     log.warn("node_id:{} request node_id:{} gossip communication failed!", this.hashgraphMember.getId(), receiverId);
                 }
@@ -147,11 +156,25 @@ public class NodeServer {
         }
     }
 
+    private void handleHashgraph() {
+        while (!shutdown) {
+            try {
+                int idleTime = 2000; //ms
+                TimeUnit.MILLISECONDS.sleep(idleTime);
+
+                this.hashgraphMember.divideRounds();
+                this.hashgraphMember.decideFame();
+                this.hashgraphMember.findOrder();
+            }catch (Exception ex) {
+                throw  new BusinessException(ex);
+            }
+        }
+    }
+
     private synchronized Event packNewEvent(int nodeId, int receiverId) {
         try {
             // 创建新事件，打包目前接收到的交易
             int otherId = receiverId;
-
             List<Event> chain = this.hashgraphMember.getHashgraph().get(nodeId);
             List<Event> otherChain = this.hashgraphMember.getHashgraph().get(otherId);
             List<Event> neighbors = new ArrayList<>(2);
@@ -161,7 +184,7 @@ public class NodeServer {
                 Event otherChainLastEvent = otherChain.get(otherChain.size()-1);
                 neighbors.add(chainLastEvent);
                 neighbors.add(otherChainLastEvent);
-
+                event.setEventId(chainLastEvent.getEventId() + 1);
                 event.setNodeId(nodeId);
                 event.setOtherId(otherId);
                 event.setTimestamp(System.currentTimeMillis());
@@ -214,6 +237,7 @@ public class NodeServer {
 
 
 
+
     private HashMap<Integer,Integer> getHashgraphHeight() {
         HashMap<Integer, Integer> hash = new HashMap<>(this.hashgraphMember.getNumNodes());
         this.hashgraphMember.getHashgraph().forEach((id, chain)->{
@@ -222,4 +246,7 @@ public class NodeServer {
         return hash;
     }
 
+    public HashgraphMember getHashgraphMember() {
+        return hashgraphMember;
+    }
 }

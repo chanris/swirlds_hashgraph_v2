@@ -2,6 +2,7 @@ package com.cystrix.hashgraph.net;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.cystrix.hashgraph.exception.BusinessException;
 import com.cystrix.hashgraph.hashview.Event;
 import com.cystrix.hashgraph.hashview.HashgraphMember;
 import com.cystrix.hashgraph.hashview.Transaction;
@@ -62,6 +63,7 @@ public class RequestHandler {
         HashMap<Integer, Integer> hashMap;
         try {
             hashMap = JSONObject.parseObject(requestDataJSonString, HashMap.class);
+            //System.out.println("接收到的Hashgraph平行链高度：" + hashMap);
         }catch (Exception e) {
             e.printStackTrace();
             response.setCode(400);
@@ -135,10 +137,23 @@ public class RequestHandler {
         for (Map.Entry<Integer, List<Event>> entry : this.hashgraphMember.getHashgraph().entrySet()) {
             Integer id = entry.getKey();
             List<Event> chain = entry.getValue();
-            int n = this.hashgraphMember.getSnapshotHeightMap().get(id);
+            //int n = this.hashgraphMember.getSnapshotHeightMap().get(id);
             // 历史长度
-            int my_size = chain.size() + n;
-            int guest_size = hashMap.get(id);
+            //int my_size = chain.size() + n;
+
+            int my_size ;
+            if (chain.size() != 0) {
+                my_size = chain.get(chain.size()-1).getEventId();
+            }else {
+                my_size = 0;
+            }
+            int guest_size;
+            try {
+                guest_size = hashMap.get(id);
+            }catch (Exception e) {
+                throw new BusinessException("取nodeId:"+ id + "hashheightMap:" + hashMap);
+            }
+
             if (my_size > guest_size) {
 //                subEventList.put(id, chain.subList(guest_size, my_size));  !!!!! 巨坑： watch out ! 会引发并发问题T_T T_T
                 int gap = my_size - guest_size;

@@ -2,6 +2,7 @@ package com.cystrix.hashgraph;
 
 import com.cystrix.hashgraph.hashview.HashgraphMember;
 import com.cystrix.hashgraph.net.NodeServer;
+import com.cystrix.hashgraph.shard.ShardUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,8 +20,11 @@ public class Application {
             serverList.add(new NodeServer(port, 20, new HashgraphMember(i, "node-"+i, nodeNum)));
             port++;
         }
-        for (NodeServer server : serverList) {
+        // 分片
+        ShardUtils.shard(serverList, 4);
+
+        /*for (NodeServer server : serverList) {
             server.startup();
-        }
+        }*/
     }
 }

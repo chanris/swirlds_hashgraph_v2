@@ -6,8 +6,10 @@ import com.cystrix.hashgraph.exception.BusinessException;
 import com.cystrix.hashgraph.hashview.search.DFS;
 import com.cystrix.hashgraph.util.SHA256;
 import lombok.Data;
+import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
 
+import java.math.BigDecimal;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -15,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 @Data
+@ToString(of = {"leaderId", "neighborNodeAddrs"})
 public class HashgraphMember {
     {
         Map<String, String> keyPair = SHA256.generateKeyPairBase64();
@@ -23,6 +26,7 @@ public class HashgraphMember {
     }
     private Integer id;
     private  String name;
+    private Integer leaderId;
     private ConcurrentHashMap<Integer, List<Event>> hashgraph; // 以map的方式保留hashgraph 副本
     private int numNodes; // 成员节点总数
     private boolean shutdown = false;
@@ -30,14 +34,15 @@ public class HashgraphMember {
     private  final String SK; // sk base64 encode
     private List<Transaction> waitForPackEventList;
     private ConcurrentHashMap<Integer, List<Event>> witnessMap; // 存放每轮的见证者
-    private ConcurrentHashMap<String, Event> eventHashMap;
+    private ConcurrentHashMap<String, Event> hashEventMap;   // 将event的hash值作为key， event事件作为key，方便构造事件之间的引用关系
 
     private Integer maxRound = 0;
     private int coinRound = 10;
-    private ConcurrentHashMap<Integer, Integer> snapshotHeightMap;
+    //private ConcurrentHashMap<Integer, Integer> snapshotHeightMap; // 平行链存储冗余的长度
     private final Object lock = new Object();
-
-    private Integer consensusEventNum = 0;
+     private Integer consensusEventNum = 0;
+    private List<Integer> neighborNodeAddrs;   // 当前epoch内 节点的邻居节点地址，地址格式：ip:port。由于都是本地模拟，存储端口号即可
+    private BigDecimal nodeStatusComprehensiveEvaluationValue; //存储当前节点在当前epoch的的权值
 
     public String getPk() {
         return this.PK;
@@ -50,26 +55,27 @@ public class HashgraphMember {
         this.name = name;
         this.numNodes = numNodes;
         this.hashgraph = new ConcurrentHashMap<>();
-        this.eventHashMap = new ConcurrentHashMap<>();
+        this.hashEventMap = new ConcurrentHashMap<>();
         this.witnessMap = new ConcurrentHashMap<>();
-        this.snapshotHeightMap = new ConcurrentHashMap<>();
+        //this.snapshotHeightMap = new ConcurrentHashMap<>();
         this.waitForPackEventList = new ArrayList<>();
         for (int i = 0; i < this.numNodes; i++) {
             List<Event> chain = new ArrayList<>();
             this.hashgraph.put(i,chain);
-            this.snapshotHeightMap.put(i, 0);
+            //this.snapshotHeightMap.put(i, 0);
         }
         // 初始化第一个事件
         Event e = new Event();
         e.setTimestamp(System.currentTimeMillis());
         e.setNodeId(id);
         e.setSignature(SHA256.signEvent(e, getSk()));
+        e.setEventId(1);
 
         this.hashgraph.get(id).add(e);
         String eventHash = null;
         try {
             eventHash = SHA256.sha256HexString(JSON.toJSONString(e));
-            this.eventHashMap.put(eventHash, e);
+            this.hashEventMap.put(eventHash, e);
         }catch (Exception ex) {
             throw new BusinessException(ex);
         }
@@ -81,7 +87,7 @@ public class HashgraphMember {
             this.hashgraph.get(id).addAll(subChain);
             for (Event e: subChain) {
                 try {
-                    this.eventHashMap.put(SHA256.sha256HexString(JSON.toJSONString(e)), e);
+                    this.hashEventMap.put(SHA256.sha256HexString(JSON.toJSONString(e)), e);
                 }catch (Exception ex) {
                     ex.printStackTrace();
                 }
@@ -95,7 +101,7 @@ public class HashgraphMember {
                 for (int i = chain.size()- 1; i > 0; i--) {
                     Event e = chain.get(i);
                     e.setSelfParent(chain.get(i-1));
-                    Event otherParent = this.eventHashMap.get(e.getOtherParentHash());
+                    Event otherParent = this.hashEventMap.get(e.getOtherParentHash());
                     e.setOtherParent(otherParent);
 
                     List<Event> neighbors = new ArrayList<>(2);
@@ -110,7 +116,7 @@ public class HashgraphMember {
                 if (index != 0) {
                     List<Event> neighbors = new ArrayList<>(2);
                     Event selfParent = this.hashgraph.get(id).get(index-1);
-                    Event otherParent = this.eventHashMap.get(e.getOtherParentHash());
+                    Event otherParent = this.hashEventMap.get(e.getOtherParentHash());
                     e.setSelfParent(selfParent);
                     e.setOtherParent(otherParent);
                     neighbors.add(selfParent);
@@ -120,66 +126,6 @@ public class HashgraphMember {
             }
         });
         return true;
-    }
-
-    /// 存储冗余
-    // 削减Hashgraph的大小
-    // 如果一个轮次之前的所有事件的consensusTimestamp全部被确定，那么就可以从Hashgraph上剪掉
-    public void snapshot() {
-        // 如果轮次次数大于等于6，那么开始削减Hashgraph的大小
-        int size1 = this.getWitnessMap().keySet().size();
-        if (size1 < 5) {
-            return;
-        }
-
-        // 获得次最小的round编号
-        List<Integer> rounds = new ArrayList<>(this.getWitnessMap().keySet());
-        Collections.sort(rounds);
-        int r = rounds.get(1);
-        //todo 判断次最小轮次的全部祖先事件是否最终定序，如果为true, 那么从内存中删除全部祖先事件。持久化磁盘中。
-        List<Event> witnessList = this.getWitnessMap().get(r);
-        for (int n = 0; n < this.getNumNodes(); n++) {
-            Event event = witnessList.get(n);
-            if (!isAllEventFindOrder(event)) {
-                return;
-            }
-        }
-
-        int size = witnessList.size();
-        if (size == this.getNumNodes()) {
-            ArrayList<Event> removeSubEventList = new ArrayList<>();
-            this.getHashgraph().forEach((id, chain)->{
-                witnessList.sort(Comparator.comparingInt(Event::getNodeId));
-                Iterator<Map.Entry<String, Event>> iterator = this.getEventHashMap().entrySet().iterator();
-                for (Event e : chain) {
-                    while (iterator.hasNext()) {
-                        Map.Entry<String, Event> entry = iterator.next();
-                        if (entry.getValue().equals(e)) {
-                            iterator.remove();
-                        }
-                    }
-                    if (e == witnessList.get(id)) {
-                        break;
-                    } else {
-                        removeSubEventList.add(e);
-                    }
-                }
-                // hashgraph：HashMap<Integer,List<Event>> 中删除事件
-                chain.removeAll(removeSubEventList);
-                int n = this.getSnapshotHeightMap().get(id) + removeSubEventList.size();
-                this.getSnapshotHeightMap().put(id, n);
-                removeSubEventList.clear();
-            });
-
-            // witnessMap<Integer,List<Event>> 中删除最小轮次的见证人列表
-            this.getWitnessMap().remove(r-1);
-            // 并将次最小轮次的见证人 的selfParent和otherParent引用设为null
-            for (Event witness : witnessList) {
-                witness.setSelfParent(null);
-                witness.setOtherParent(null);
-                witness.setNeighbors(null);
-            }
-        }
     }
 
     public void divideRounds() {
@@ -328,8 +274,8 @@ public class HashgraphMember {
         // snapshot
         for (Event e: consensusEventList) {
             this.hashgraph.get(e.getNodeId()).remove(e);
-            this.snapshotHeightMap.put(e.getNodeId(), this.snapshotHeightMap.get(e.getNodeId()) + 1);
-            this.eventHashMap.remove(SHA256.sha256HexString(JSONObject.toJSONString(e)));
+            //this.snapshotHeightMap.put(e.getNodeId(), this.snapshotHeightMap.get(e.getNodeId()) + 1);
+            this.hashEventMap.remove(SHA256.sha256HexString(JSONObject.toJSONString(e)));
             if (e.getIsWitness()) {
                 this.witnessMap.get(e.getCreatedRound()).remove(e);
             }
@@ -341,6 +287,48 @@ public class HashgraphMember {
             System.out.println("node_id:" + getId() + " hashgraph " + this.consensusEventNum);
             System.out.println("**********************************************************************************************************");
         }*/
+    }
+
+    public void snapshot() {
+        // 削减hashgraph 的大小
+        // 削减hashEventMap
+        // 记录打包交易的数量
+
+        List<Integer> heightList = new ArrayList<>(this.numNodes); // 存储当前hashgraph的平行链高度
+        this.hashgraph.forEach((id,chain)->{
+            heightList.add(chain.size());
+        });
+
+        boolean flag = true;  // 进行存储冗余的标记，如果平行链高度都超过某个阈值，那么进行hashgraph1的削减
+        int threshold = 30;
+        int removeLen = 10; // 删除的链长度
+        for (Integer height: heightList) {
+            if (height < threshold) {
+                flag = false;
+                break;
+            }
+        }
+
+        // 削减hashgraph
+        if (flag) {
+            this.hashgraph.forEach((id,chain)->{
+                List<Event> subEventList = new ArrayList<>(removeLen);
+                for (int i = 0; i < removeLen; i++) {
+                    Event e = chain.get(i);
+                    try {
+                        // 削减hashEventMap
+                        this.hashEventMap.remove(SHA256.sha256HexString(JSON.toJSONString(e)));
+                    } catch (NoSuchAlgorithmException ex) {
+                        throw new BusinessException(ex);
+                    }
+                    subEventList.add(e);
+                }
+                chain.removeAll(subEventList);
+                // 把删除的event的数量 记录到snapshotHeightMap
+                //int n = this.snapshotHeightMap.get(id);
+                //this.snapshotHeightMap.put(id, n + removeLen);
+            });
+        }
     }
 
 
