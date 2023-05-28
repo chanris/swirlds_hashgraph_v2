@@ -41,7 +41,11 @@ public class HashgraphMember {
     //private ConcurrentHashMap<Integer, Integer> snapshotHeightMap; // 平行链存储冗余的长度
     private final Object lock = new Object();
      private Integer consensusEventNum = 0;
-    private List<Integer> neighborNodeAddrs;   // 当前epoch内 节点的邻居节点地址，地址格式：ip:port。由于都是本地模拟，存储端口号即可
+
+    private List<Integer> intraShardNeighborAddrs;
+    private List<Integer> leaderNeighborAddrs;  // 当前epoch内 节点的邻居节点地址，地址格式：ip:port。由于都是本地模拟，存储端口号即可
+
+
     private BigDecimal nodeStatusComprehensiveEvaluationValue; //存储当前节点在当前epoch的的权值
 
     public String getPk() {

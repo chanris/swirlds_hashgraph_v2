@@ -89,12 +89,14 @@ public class NodeServer {
             TimeUnit.MILLISECONDS.sleep(time);
 
             // 选择邻居节点
-            int receiverId = r.nextInt(Integer.MAX_VALUE);
-            receiverId %= this.hashgraphMember.getNumNodes();
-            if (receiverId == this.hashgraphMember.getId()) {
-                receiverId ++;
-                receiverId %= this.hashgraphMember.getNumNodes();
-            }
+           int receiverId = r.nextInt(Integer.MAX_VALUE);
+           if (this.hashgraphMember.getLeaderId().equals(this.hashgraphMember.getId())) {
+               receiverId %= this.hashgraphMember.getLeaderNeighborAddrs().size();
+               receiverId = this.hashgraphMember.getLeaderNeighborAddrs().get(receiverId);
+           }else {
+               receiverId %= this.hashgraphMember.getIntraShardNeighborAddrs().size();
+               receiverId = this.hashgraphMember.getIntraShardNeighborAddrs().get(receiverId);
+           }
 
             try (Socket socket = new Socket("127.0.0.1", receiverId + 8080);
                  BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
@@ -153,6 +155,7 @@ public class NodeServer {
             }catch (Exception e) {
                 throw new BusinessException(e);
             }
+
         }
     }
 

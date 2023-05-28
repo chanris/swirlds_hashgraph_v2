@@ -29,10 +29,10 @@ public class ShardUtils {
             nodeWeightMap.put(weightList.get(i), i);
             nodeWeightMap2.put(i, weightList.get(i));
         }
-        weightList.sort(Collections.reverseOrder());
-
+//        weightList.sort(Collections.reverseOrder());
+        Collections.sort(weightList);
         // shard-id, nodeIdList
-        System.out.println("x");        HashMap<Integer, List<Integer>> shardNodeListMap = new HashMap<>(shardSize);
+        HashMap<Integer, List<Integer>> shardNodeListMap = new HashMap<>(shardSize);
         for (int i = 0; i < shardSize; i++) {
             shardNodeListMap.put(i, new ArrayList<>(nodeList.size()/shardSize));
         }
@@ -41,11 +41,9 @@ public class ShardUtils {
             for (int j = 0; j < shardSize; j++) {
                 //shardNodeListMap.get(j).add(nodeWeightMap.get(weightList.get(j*(i+1))));
                 List<Integer> shardNodeIdList = shardNodeListMap.get(j);
-                int nodeId =nodeWeightMap.get(weightList.get(i + j));
+                int nodeId = nodeWeightMap.get(weightList.get(i + j));
                 shardNodeIdList.add(nodeId);
             }
-
-
         }
         // the  nodes in each shard only contribute to the consensus of events in their onw nodes
         // and only store the cross-shard events without consensus.
@@ -56,34 +54,37 @@ public class ShardUtils {
 
         // 决定每个分片的leader
         // 为每个分片随机选择一个领导人
-//        System.out.println(shardNodeListMap);
         shardNodeListMap.forEach((shardId, shardNodeList)->{
             Random r = new Random(System.currentTimeMillis() / 10000);
             // 领导人权值选择值，如果x落入某个节点的权值区间，则该节点为leader.
-            double x = r.nextDouble();
+
             BigDecimal sum = new BigDecimal("0");
             for (int i = 0; i < shardSize; i++) {
                 sum = sum.add(nodeWeightMap2.get(shardNodeList.get(i)));
             }
 
-            BigDecimal z = new BigDecimal(String.format("%.12f", x));
-            z = z.multiply(sum);
             int leaderId = shardNodeList.get(0);
             for (int i = 0; i < shardSize; i++) {
-                BigDecimal left,right;
-                int nodeId = shardNodeList.get(i);
-                if (i == 0) {
-                    left = new BigDecimal("0");
-                    right = nodeWeightMap2.get(nodeId);
+                double x = r.nextDouble();
+                BigDecimal z = new BigDecimal(String.format("%.12f", x));
+                z = z.multiply(sum);
 
-                }else {
-                    left = nodeWeightMap2.get(shardNodeList.get(i-1));
-                    right = nodeWeightMap2.get(shardNodeList.get(i));
+                BigDecimal left,right;
+                left = new BigDecimal("0");
+                int nodeId = shardNodeList.get(i);
+                right = nodeWeightMap2.get(nodeId);
+
+                if (i != 0) {
+                    left = left.add(nodeWeightMap2.get(shardNodeList.get(i-1)));
+                    right = right.add(nodeWeightMap2.get(shardNodeList.get(i)));
                 }
-                if (left.compareTo(z) >= 0 && right.compareTo(z) < 0) {
+
+                if (left.compareTo(z) <= 0 && right.compareTo(z) > 0) {
+                    //log.info("left:{} z:{} right:{}", left, z, right);
                     leaderId = nodeId;
                 }
             }
+
             for (int i = 0; i < shardSize; i++) {
                 int nodeId = shardNodeList.get(i);
                 nodeList.get(nodeId).getHashgraphMember().setLeaderId(leaderId);
@@ -97,16 +98,22 @@ public class ShardUtils {
             for (int i = 0; i < shardSize; i++) {
                 int nodeId = shardNodeList.get(i); // 一个分片内的一个nodeId
                 HashgraphMember hashgraphMember = nodeList.get(nodeId).getHashgraphMember();
-                hashgraphMember.setNeighborNodeAddrs(new ArrayList<>(shardNodeList));
+                hashgraphMember.setIntraShardNeighborAddrs(new ArrayList<>(shardNodeList));
+
+                List<Integer> neighborIdList =  hashgraphMember.getIntraShardNeighborAddrs();
+                List<Integer> neighborIdList2 = new ArrayList<>(neighborIdList);
+                neighborIdList2.remove(new Integer(nodeId));
+                hashgraphMember.setIntraShardNeighborAddrs(neighborIdList2);
+                hashgraphMember.setNodeStatusComprehensiveEvaluationValue(nodeWeightMap2.get(nodeId));
                 // 如果是leader节点
                 if (leaderIdList.contains(nodeId)) {
-                    hashgraphMember.getNeighborNodeAddrs().addAll(leaderIdList);
+                    List<Integer> leaderList = new ArrayList<>(leaderIdList);
+                    leaderList.remove(new Integer(nodeId));
+                    leaderList.addAll(neighborIdList2);
+                    hashgraphMember.setLeaderNeighborAddrs(leaderList);
                 }
-                List<Integer> neighborIdList =  hashgraphMember.getNeighborNodeAddrs();
-                hashgraphMember.setNeighborNodeAddrs(new ArrayList<>(new HashSet<>(neighborIdList)));
-                hashgraphMember.setNodeStatusComprehensiveEvaluationValue(nodeWeightMap2.get(nodeId));
-                //log.info("shard_id:{} node_id:{}, neighborIdList:{}, leader_id:{} quanzhi:{} ",shardId, nodeId,    hashgraphMember.getNeighborNodeAddrs(),
-                //        hashgraphMember.getLeaderId(), hashgraphMember.getNodeStatusComprehensiveEvaluationValue());
+                log.info("node_id:{}, intra neighbors:{}, leader_id:{} leader neighbors:{} ",nodeId,    hashgraphMember.getIntraShardNeighborAddrs(),
+                        hashgraphMember.getLeaderId(), hashgraphMember.getLeaderNeighborAddrs());
 
             }
         });
