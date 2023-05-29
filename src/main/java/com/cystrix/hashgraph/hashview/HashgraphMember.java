@@ -39,10 +39,11 @@ public class HashgraphMember {
 
     private Integer maxRound = 0;
     private int coinRound = 10;
-    //private ConcurrentHashMap<Integer, Integer> snapshotHeightMap; // 平行链存储冗余的长度
-    private final Object lock = new Object();
-     private Integer consensusEventNum = 0;
 
+    private final Object lock = new Object();
+    private Integer consensusEventNum = 0;
+
+    private Integer transactionNum = 10;
     private List<Integer> intraShardNeighborAddrs;
     private List<Integer> leaderNeighborAddrs;  // 当前epoch内 节点的邻居节点地址，地址格式：ip:port。由于都是本地模拟，存储端口号即可
 
@@ -62,12 +63,10 @@ public class HashgraphMember {
         this.hashgraph = new ConcurrentHashMap<>();
         this.hashEventMap = new ConcurrentHashMap<>();
         this.witnessMap = new ConcurrentHashMap<>();
-        //this.snapshotHeightMap = new ConcurrentHashMap<>();
         this.waitForPackEventList = new ArrayList<>();
         for (int i = 0; i < this.numNodes; i++) {
             List<Event> chain = new ArrayList<>();
             this.hashgraph.put(i,chain);
-            //this.snapshotHeightMap.put(i, 0);
         }
         // 初始化第一个事件
         Event e = new Event();
@@ -253,6 +252,11 @@ public class HashgraphMember {
             System.out.println("node_id:" + getId() + " hashgraph " + this.consensusEventNum);
             System.out.println("**********************************************************************************************************");
         }*/
+    }
+
+
+    public void snapshot2() {
+
     }
 
     public void snapshot() {
