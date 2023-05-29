@@ -36,6 +36,8 @@ public class RequestHandler {
             case "/pullEvent":
                 pullEventMapping(request, response);
                 break;
+            case "/pullEventByOtherShard":
+                pullEventByOtherShardMapping(request, response);
             case "/default":
                 defaultMapping(request, response);
             default:
@@ -43,6 +45,37 @@ public class RequestHandler {
                 break;
         }
         return response;
+    }
+
+    private void pullEventByOtherShardMapping(Request request, Response response) {
+        //String json = request.getData();
+        //HashMap<Integer, Integer> hashMap = JSONObject.parseObject(json, HashMap.class);  //请求者的哈希图高度
+        //  接收者的邻居节点列表
+        List<Integer> neighborIdList = new ArrayList<>(hashgraphMember.getIntraShardNeighborAddrs());
+        // 邻居节点列表添加自己的id
+        neighborIdList.add(hashgraphMember.getId());
+        // 如果自己不是某分片的leader，则拒绝处理该请求
+        if (!hashgraphMember.getLeaderId().equals(hashgraphMember.getId())) {
+            response.setCode(400);
+            response.setMessage("请求节点不是Leader");
+        }else {
+            // 自己的哈希图高度
+            // HashMap<Integer, Integer> myHashgraphHeightMap = new HashMap<>(neighborIdList.size());
+            // 分片内 平行链上 最新的事件（代表未达成共识的事件）
+            Map<Integer, Event> intraShardingLastEventMap = new HashMap<>();
+
+            // 只发送自己分片内的平行链上的未达成共识的事件
+            for (Integer nodeId : neighborIdList) {
+                List<Event> chain = this.hashgraphMember.getHashgraph().get(nodeId);
+                if (chain.size() != 0) {
+                    intraShardingLastEventMap.put(nodeId, chain.get(chain.size()-1));
+                }
+            }
+            String jsonData = JSON.toJSONString(intraShardingLastEventMap);
+            response.setCode(200);
+            response.setMessage("SUCCESS");
+            response.setData(jsonData);
+        }
     }
 
     private void sendTransactionMapping(Request request, Response response) {

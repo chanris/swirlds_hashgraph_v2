@@ -88,19 +88,32 @@ public class NodeServer {
             int time = r.nextInt(700) + 500;
             TimeUnit.MILLISECONDS.sleep(time);
 
+            // shard
             // 选择邻居节点
-           int receiverId = r.nextInt(Integer.MAX_VALUE);
-           if (this.hashgraphMember.getLeaderId().equals(this.hashgraphMember.getId())) {
+            /*int receiverId = r.nextInt(Integer.MAX_VALUE);
+            if (this.hashgraphMember.getLeaderId().equals(this.hashgraphMember.getId())) {
                receiverId %= this.hashgraphMember.getLeaderNeighborAddrs().size();
                receiverId = this.hashgraphMember.getLeaderNeighborAddrs().get(receiverId);
-           }else {
+            }else {
                receiverId %= this.hashgraphMember.getIntraShardNeighborAddrs().size();
                receiverId = this.hashgraphMember.getIntraShardNeighborAddrs().get(receiverId);
-           }
+            }*/
+
+
+
+
+            //non-shard
+            // 选择邻居节点
+            int receiverId = r.nextInt(Integer.MAX_VALUE);
+            receiverId %= this.hashgraphMember.getNumNodes();
+            if (receiverId == this.hashgraphMember.getId()) {
+                receiverId ++;
+                receiverId %= this.hashgraphMember.getNumNodes();
+            }
 
             try (Socket socket = new Socket("127.0.0.1", receiverId + 8080);
                  BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                 PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);){
+                 PrintWriter writer = new PrintWriter(socket.getOutputStream(), true)){
                 Request request = new Request();
                 request.setCode(200);
                 request.setMapping("/pullEvent");
@@ -201,7 +214,6 @@ public class NodeServer {
                 event.setSignature(signature);
                 chain.add(event);
             }
-
             return event;
         }catch (Exception e) {
             throw new BusinessException(e);
