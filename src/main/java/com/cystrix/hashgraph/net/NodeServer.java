@@ -18,6 +18,7 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -90,102 +91,137 @@ public class NodeServer {
 
             // shard
             // 选择邻居节点
-            /*int receiverId = r.nextInt(Integer.MAX_VALUE);
-            if (this.hashgraphMember.getLeaderId().equals(this.hashgraphMember.getId())) {
+            int receiverId = r.nextInt(Integer.MAX_VALUE);
+            boolean isLeader = this.hashgraphMember.getLeaderId().equals(this.hashgraphMember.getId());
+            if (isLeader) {
                receiverId %= this.hashgraphMember.getLeaderNeighborAddrs().size();
                receiverId = this.hashgraphMember.getLeaderNeighborAddrs().get(receiverId);
             }else {
                receiverId %= this.hashgraphMember.getIntraShardNeighborAddrs().size();
                receiverId = this.hashgraphMember.getIntraShardNeighborAddrs().get(receiverId);
-            }*/
-
-
-
+            }
 
             //non-shard
             // 选择邻居节点
-            int receiverId = r.nextInt(Integer.MAX_VALUE);
+       /*     int receiverId = r.nextInt(Integer.MAX_VALUE);
             receiverId %= this.hashgraphMember.getNumNodes();
             if (receiverId == this.hashgraphMember.getId()) {
                 receiverId ++;
                 receiverId %= this.hashgraphMember.getNumNodes();
-            }
+            }*/
 
             try (Socket socket = new Socket("127.0.0.1", receiverId + 8080);
                  BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                  PrintWriter writer = new PrintWriter(socket.getOutputStream(), true)){
                 Request request = new Request();
                 request.setCode(200);
-                request.setMapping("/pullEvent");
-                Map<Integer, Integer> hashgraphHeightMap = new HashMap<>();
-                this.hashgraphMember.getHashgraph().forEach((id, chain)->{
-                    //int n = this.hashgraphMember.getSnapshotHeightMap().get(id);
-                    //hashgraphHeightMap.put(id, n + chain.size());
-                    if (chain.size() != 0) {
-                        hashgraphHeightMap.put(id, chain.get(chain.size()-1).getEventId());
-                    }else {
-                        hashgraphHeightMap.put(id, 0);
-                    }
 
-                });
-                request.setData(JSONObject.toJSONString(hashgraphHeightMap));
-                writer.println(RequestHandler.requestObject2JsonString(request));
-                Response response = RequestHandler.getResponseObject(reader);
+                // 首先判断自己是否为leader节点， 再判断receiver 是否为领导人节点
+                if (isLeader && !this.hashgraphMember.getIntraShardNeighborAddrs().contains(new Integer(receiverId))) {
+                    // 接收其他分片内最新未达成共识的事件
+                    request.setMapping("/pullEventByOtherShard");
+                    // 写入请求
+                    writer.println(RequestHandler.requestObject2JsonString(request));
+                    // 获得响应信息
+                    Response response = RequestHandler.getResponseObject(reader);
+                    if (response.getCode() == 200) {
+                        String data = response.getData();
+                        HashMap<Integer, Event> otherShardLastEventWithoutConsensus = JSON.parseObject(data, new TypeReference<HashMap<Integer, Event>>() {
+                            @Override
+                            public HashMap<Integer, Event> parseObject(String text) {
+                                return super.parseObject(text);
+                            }
+                        });
 
-                if (response.getCode() == 200) {
-                    String data = response.getData();
-                    HashMap<Integer, List<Event>> subEventListMap = JSON.parseObject(data, new TypeReference<>() {
-                        @Override
-                        public HashMap<Integer, List<Event>> parseObject(String text) {
-                            return super.parseObject(text);
+                        // 写入本地hashgraph中
+                        otherShardLastEventWithoutConsensus.forEach((nodeId, event)->{
+                            this.hashgraphMember.getHashgraph().get(nodeId).add(event);
+                        });
+                        // 创建新事件
+                        try {
+                            packNewEventFromRefOtherShardEvent(this.hashgraphMember.getId(), receiverId);
+                        } catch (NoSuchAlgorithmException e) {
+                            log.warn("写入新事件失败");
+                            throw new BusinessException(e);
                         }
-                    });
-                    boolean resultSign = this.hashgraphMember.addEventBatch(subEventListMap);
-                    int nodeId = this.hashgraphMember.getId();
-                    // 创建新事件
-                    Event event = packNewEvent(nodeId, receiverId);
-
-                    // 打包目前接收到的交易
-//                     packTransactionList(event);
-                    packTransactionListMock(event);
-                    // for search parent hash
-                    this.hashgraphMember.getHashEventMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
-//                    this.hashgraphMember.divideRounds();
-//                    this.hashgraphMember.decideFame();
-//                    this.hashgraphMember.findOrder();
-
-                    this.hashgraphMember.snapshot();
-                    if (nodeId == 0) {
-                        List<Integer> height = new ArrayList<>();
-                        for (int i = 0; i < this.hashgraphMember.getNumNodes(); i++) {
-                            height.add(this.hashgraphMember.getHashgraph().get(i).size());
-                        }
-                        System.out.println("node_id: 0" + height);
                     }
                 }else {
-                    log.warn("node_id:{} request node_id:{} gossip communication failed!", this.hashgraphMember.getId(), receiverId);
+                    // receiver 为分片内节点
+                    request.setMapping("/pullEventBySelfShard");
+                    // 记录当前hashgraph副本的高度
+                    Map<Integer, Integer> hashgraphHeightMap = new HashMap<>();
+                    this.hashgraphMember.getHashgraph().forEach((id, chain)->{
+                        if (chain.size() != 0) {
+                            hashgraphHeightMap.put(id, chain.get(chain.size()-1).getEventId());
+                        }else {
+                            hashgraphHeightMap.put(id, 0);
+                        }
+
+                    });
+                    request.setData(JSONObject.toJSONString(hashgraphHeightMap));
+                    //log.info("发送的高度数据:{}", request.getData());
+                    writer.println(RequestHandler.requestObject2JsonString(request));
+                    Response response = RequestHandler.getResponseObject(reader);
+
+                    if (response.getCode() == 200) {
+                        String data = response.getData();
+                        HashMap<Integer, List<Event>> subEventListMap = JSON.parseObject(data, new TypeReference<>() {
+                            @Override
+                            public HashMap<Integer, List<Event>> parseObject(String text) {
+                                return super.parseObject(text);
+                            }
+                        });
+                        boolean resultSign = this.hashgraphMember.addEventBatch(subEventListMap);
+
+                        int nodeId = this.hashgraphMember.getId();
+                        // 创建新事件
+                        Event event = packNewEvent(nodeId, receiverId);
+                        // 打包目前接收到的交易
+                        packTransactionListMock(event);
+
+                        // for search parent hash
+                        //this.hashgraphMember.getHashEventMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
+                    }
+                }
+
+                this.hashgraphMember.snapshot();
+                if (this.hashgraphMember.getId() == 0) {
+                    List<Integer> height = new ArrayList<>();
+                    for (int i = 0; i < this.hashgraphMember.getNumNodes(); i++) {
+                        height.add(this.hashgraphMember.getHashgraph().get(i).size());
+                    }
+                     log.info("node_id: 0 hashgraph height: {} ,neighborsList: {}" , height, this.hashgraphMember.getIntraShardNeighborAddrs());
                 }
             }catch (Exception e) {
+                log.warn("node_id:{} request node_id:{} gossip communication failed!", this.hashgraphMember.getId(), receiverId);
                 throw new BusinessException(e);
             }
-
         }
     }
 
-    private void handleHashgraph() {
-        while (!shutdown) {
-            try {
-                int idleTime = 2000; //ms
-                TimeUnit.MILLISECONDS.sleep(idleTime);
 
-                this.hashgraphMember.divideRounds();
-                this.hashgraphMember.decideFame();
-                this.hashgraphMember.findOrder();
-            }catch (Exception ex) {
-                throw  new BusinessException(ex);
-            }
-        }
+    private void  packNewEventFromRefOtherShardEvent(int selfNodeId, int otherNodeId) throws NoSuchAlgorithmException {
+        Event e = new Event();
+        List<Event> selfChain = this.hashgraphMember.getHashgraph().get(selfNodeId);
+        List<Event> otherChain = this.hashgraphMember.getHashgraph().get(otherNodeId);
+        Event selfParentEvent = selfChain.get(selfChain.size() - 1);
+        Event otherParentEvent = otherChain.get(otherChain.size()-1);
+        e.setNeighbors(new ArrayList<>(selfChain));
+        e.setSelfParent(selfParentEvent);
+        e.setSelfParentHash(SHA256.sha256HexString(JSON.toJSONString(selfParentEvent)));
+        e.setOtherParent(otherParentEvent);
+        e.setOtherParentHash(SHA256.sha256HexString(JSON.toJSONString(otherParentEvent)));
+        e.setTimestamp(System.currentTimeMillis());
+        e.setEventId(selfParentEvent.getEventId() + 1);
+        e.setNodeId(selfNodeId);
+        e.setOtherId(otherNodeId);
+        e.setPacker(this.hashgraphMember.getPk());
+        String signature = SHA256.signEvent(e, this.hashgraphMember.getSk());
+        e.setSignature(signature);
+        selfChain.add(e);
     }
+
+
 
     private synchronized Event packNewEvent(int nodeId, int receiverId) {
         try {

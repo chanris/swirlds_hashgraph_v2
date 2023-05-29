@@ -25,7 +25,7 @@ public class DFS {
             paths.add(new ArrayList<>(path));
         }
 
-        if (node.getNeighbors() != null && node.getNeighbors().size() == 2
+        if (node.getNeighbors() != null && node.getNeighbors().size() > 0
                 && node.getNeighbors().get(0) != null && node.getNeighbors().get(1) != null) {
             // 递归遍历相邻节点
             for (Event neighbor : node.getNeighbors()) {
@@ -48,7 +48,7 @@ public class DFS {
             return true;
         }
 
-        if (startNode.getNeighbors() != null && startNode.getNeighbors().size() == 2
+        if (startNode.getNeighbors() != null && startNode.getNeighbors().size() > 0
                 && startNode.getNeighbors().get(0) != null && startNode.getNeighbors().get(1) != null) {
             // 递归遍历相邻节点
             for (Event neighbor : startNode.getNeighbors()) {

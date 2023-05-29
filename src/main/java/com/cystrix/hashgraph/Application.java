@@ -21,7 +21,7 @@ public class Application {
             port++;
         }
         // 分片
-//        ShardUtils.shard(serverList, 4);
+        ShardUtils.shard(serverList, 4);
 
         for (NodeServer server : serverList) {
             server.startup();

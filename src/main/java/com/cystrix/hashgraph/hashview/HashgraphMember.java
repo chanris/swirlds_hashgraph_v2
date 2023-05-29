@@ -14,6 +14,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.IntStream;
 
 @Slf4j
 @Data
@@ -89,45 +90,6 @@ public class HashgraphMember {
     public boolean addEventBatch(HashMap<Integer, List<Event>> subHashgraph) {
         subHashgraph.forEach((id, subChain)->{
             this.hashgraph.get(id).addAll(subChain);
-            for (Event e: subChain) {
-                try {
-                    this.hashEventMap.put(SHA256.sha256HexString(JSON.toJSONString(e)), e);
-                }catch (Exception ex) {
-                    ex.printStackTrace();
-                }
-            }
-        });
-
-        // for build DFS structure
-        subHashgraph.forEach((id, chain)->{
-            // 找到新加入的事件的自父亲event
-            if (chain.size() != 0) {
-                for (int i = chain.size()- 1; i > 0; i--) {
-                    Event e = chain.get(i);
-                    e.setSelfParent(chain.get(i-1));
-                    Event otherParent = this.hashEventMap.get(e.getOtherParentHash());
-                    e.setOtherParent(otherParent);
-
-                    List<Event> neighbors = new ArrayList<>(2);
-                    neighbors.add(e.getSelfParent());
-                    neighbors.add(otherParent);
-                    e.setNeighbors(neighbors);
-                }
-
-                // 若不是第一个event，则说明有父亲事件
-                Event e = chain.get(0);
-                int index = this.hashgraph.get(id).indexOf(e);
-                if (index != 0) {
-                    List<Event> neighbors = new ArrayList<>(2);
-                    Event selfParent = this.hashgraph.get(id).get(index-1);
-                    Event otherParent = this.hashEventMap.get(e.getOtherParentHash());
-                    e.setSelfParent(selfParent);
-                    e.setOtherParent(otherParent);
-                    neighbors.add(selfParent);
-                    neighbors.add(otherParent);
-                    e.setNeighbors(neighbors);
-                }
-            }
         });
         return true;
     }
@@ -297,42 +259,37 @@ public class HashgraphMember {
         // 削减hashgraph 的大小
         // 削减hashEventMap
         // 记录打包交易的数量
-
         List<Integer> heightList = new ArrayList<>(this.numNodes); // 存储当前hashgraph的平行链高度
         this.hashgraph.forEach((id,chain)->{
             heightList.add(chain.size());
         });
-
-        boolean flag = true;  // 进行存储冗余的标记，如果平行链高度都超过某个阈值，那么进行hashgraph1的削减
+        List<Integer> neighborIdList = new ArrayList<>();
+        neighborIdList.addAll(this.intraShardNeighborAddrs);
+        neighborIdList.add(this.id);
         int threshold = 30;
-        int removeLen = 10; // 删除的链长度
-        for (Integer height: heightList) {
-            if (height < threshold) {
-                flag = false;
-                break;
-            }
-        }
 
         // 削减hashgraph
-        if (flag) {
-            this.hashgraph.forEach((id,chain)->{
-                List<Event> subEventList = new ArrayList<>(removeLen);
-                for (int i = 0; i < removeLen; i++) {
-                    Event e = chain.get(i);
-                    try {
-                        // 削减hashEventMap
-                        this.hashEventMap.remove(SHA256.sha256HexString(JSON.toJSONString(e)));
-                    } catch (NoSuchAlgorithmException ex) {
-                        throw new BusinessException(ex);
+        this.hashgraph.forEach((id,chain)->{
+            if (neighborIdList.contains(id)) {
+                    if (chain.size() > threshold) {
+                        log.debug("SNAPSHOT!!!************************** neigbors:{}", neighborIdList);
+                        List<Event> subRemoveList = new ArrayList<>(10);
+                        int size = chain.size() * 2 / 3;
+                        for (int i = 0; i < size; i++) {
+                            subRemoveList.add(chain.get(i));
+                        }
+                        chain.removeAll(subRemoveList);
                     }
-                    subEventList.add(e);
+            }else {
+                int size = chain.size();  // > 50  - 40
+                if (size >= 20) {
+                    Event lastEvent = chain.get(size-1);
+                    chain = new ArrayList<>();
+                    chain.add(lastEvent);
                 }
-                chain.removeAll(subEventList);
-                // 把删除的event的数量 记录到snapshotHeightMap
-                //int n = this.snapshotHeightMap.get(id);
-                //this.snapshotHeightMap.put(id, n + removeLen);
-            });
-        }
+            }
+        });
+
     }
 
 

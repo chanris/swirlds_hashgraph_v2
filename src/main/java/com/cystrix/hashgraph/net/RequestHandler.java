@@ -6,6 +6,7 @@ import com.cystrix.hashgraph.exception.BusinessException;
 import com.cystrix.hashgraph.hashview.Event;
 import com.cystrix.hashgraph.hashview.HashgraphMember;
 import com.cystrix.hashgraph.hashview.Transaction;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -13,6 +14,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 
+@Slf4j
 public class RequestHandler {
 
     private HashgraphMember hashgraphMember;
@@ -38,6 +40,10 @@ public class RequestHandler {
                 break;
             case "/pullEventByOtherShard":
                 pullEventByOtherShardMapping(request, response);
+                break;
+            case "/pullEventBySelfShard":
+                pullEventBySelfShardMapping(request, response);
+                break;
             case "/default":
                 defaultMapping(request, response);
             default:
@@ -45,6 +51,59 @@ public class RequestHandler {
                 break;
         }
         return response;
+    }
+
+    private void pullEventBySelfShardMapping(Request request, Response response) {
+        String json = request.getData();
+        if(json == null) {
+            response.setCode(400);
+            response.setMessage("请求参数错误");
+            return;
+        }
+        //log.info("接收到的高度数据:{}", json);
+        HashMap<Integer, Integer> hashMap = JSONObject.parseObject(json, HashMap.class);  //请求者的哈希图高度
+        //log.info("解析后的 高度数据:{}", hashMap);
+        //  接收者的邻居节点列表
+        List<Integer> neighborIdList = new ArrayList<>(hashgraphMember.getIntraShardNeighborAddrs());
+        // 邻居节点列表添加自己的id
+        neighborIdList.add(hashgraphMember.getId());
+        // 自己的哈希图高度
+        HashMap<Integer, Integer> myHashgraphHeightMap = new HashMap<>(neighborIdList.size());
+        this.hashgraphMember.getHashgraph().forEach((id, chain)->{
+            if (chain.size() != 0) {
+                myHashgraphHeightMap.put(id, chain.get(chain.size() - 1).getEventId());
+            }else {
+                myHashgraphHeightMap.put(id, 0);
+            }
+
+        });
+
+        // 要发送的事件集合
+        HashMap<Integer, List<Event>> subEventListMap = new HashMap<>();
+        for (int i = 0; i < hashgraphMember.getNumNodes(); i++) {
+            int nodeId = i;
+            // 获得本地hashgraph副本高度
+            int my_size = myHashgraphHeightMap.get(nodeId);
+            // 获得请求者的hashgraph副本高度
+            int guest_size = hashMap.get(nodeId);
+            List<Event> chain = hashgraphMember.getHashgraph().get(nodeId);
+            if (my_size > guest_size) {
+                List<Event> subEventList = new ArrayList<>();
+                for (int j = chain.size() - 1; j >= 0; j--) {
+                    Event e = chain.get(j);
+                    if (e.getEventId() > guest_size) {
+                        subEventList.add(e);
+                    }
+                }
+                subEventListMap.put(nodeId, subEventList);
+            }
+        }
+
+        //转成json字符串格式
+        String data = JSON.toJSONString(subEventListMap);
+        response.setCode(200);
+        response.setMessage("SUCCESS");
+        response.setData(data);
     }
 
     private void pullEventByOtherShardMapping(Request request, Response response) {
