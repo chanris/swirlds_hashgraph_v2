@@ -3,7 +3,6 @@ package com.cystrix.hashgraph.net;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.alibaba.fastjson2.TypeReference;
-import com.cystrix.chart.ChartUtils;
 import com.cystrix.hashgraph.exception.BusinessException;
 import com.cystrix.hashgraph.hashview.Event;
 import com.cystrix.hashgraph.hashview.HashgraphMember;
@@ -14,6 +13,7 @@ import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
@@ -36,22 +36,22 @@ public class NodeServer {
     private ExecutorService executor;
     private int threadNum; // 线程池数量
     private HashgraphMember hashgraphMember;
-    private boolean isShard;
+    private int shardType;
     private AtomicInteger trigger = new AtomicInteger(0);
 
-    public NodeServer(int port, int threadNum, HashgraphMember hashgraphMember, boolean isShard) {
-        this.port = port;
+    public NodeServer(int threadNum, HashgraphMember hashgraphMember, int shardType) {
         this.executor = Executors.newFixedThreadPool(threadNum);
         this.threadNum = threadNum;
         this.hashgraphMember = hashgraphMember;
-        this.isShard = isShard;
+        this.shardType = shardType;
     }
 
     public void startup() {
         new Thread(()->{
-            try (ServerSocket serverSocket = new ServerSocket(port)){
-                log.info("node_id:{} node_name:{} port: {}  startup success!", this.hashgraphMember.getId(),
-                        this.hashgraphMember.getName(), port);
+            try (ServerSocket serverSocket = new ServerSocket(0)){
+                //log.info("node_id:{} node_name:{} port: {}  startup success!", this.hashgraphMember.getId(),
+                       // this.hashgraphMember.getName(), serverSocket.getLocalPort());
+                setPort(serverSocket.getLocalPort());
                 while (!shutdown) {
                     Socket clientSocket = serverSocket.accept();
                     executor.execute(new Task(clientSocket, hashgraphMember));
@@ -61,29 +61,29 @@ public class NodeServer {
                 }
                 executor.shutdown();
             }catch (Exception e) {
-                throw new BusinessException(e);
+                throw new BusinessException("无可用端口");
             }
         },"node_" + port + "_await_request_thread").start();
+    }
 
+    public void startGossipSync(){
         Thread t1 = new Thread(()->{
             // hashgraph 使用的 八卦协议 拉的方式：即 节点向随机邻居节点发送请求，邻居节点发送哈希图给原节点，
             // 源节点在本地创建新事件，并指向此次通信的邻居节点
-            log.info("node_{}_gossip_sync_thread  startup success!", this.hashgraphMember.getId());
+            //log.info("node_{}_gossip_sync_thread  startup success!", this.hashgraphMember.getId());
             try {
-                if (isShard) {
-                    gossipSync_shard();
-                }else {
+                if (shardType == 0) {
                     gossipSync();
+                }else if (shardType == 1){
+                    gossipSync_shard();
+                }else if (shardType == 2){
+                    gossipSync_ours_shard();
                 }
             } catch (Exception e) {
                 throw new BusinessException(e);
             }
         }, "node_" + port + "_gossip_sync_thread");
         t1.start();
-
-        if (this.hashgraphMember.getId() == 0) {
-            ChartUtils.showTPS(this.hashgraphMember);
-        }
     }
 
     private void gossipSync() throws Exception{
@@ -91,31 +91,15 @@ public class NodeServer {
             // 间隔 1 ~ 1.5s 发起一次通信
             Random r = new Random(System.currentTimeMillis() / (this.hashgraphMember.getId() + 1)
                     + this.hashgraphMember.getId() * 1000);
-            int time = r.nextInt(1000) + 4000;
+            int time = r.nextInt(1000) + 500;
             TimeUnit.MILLISECONDS.sleep(time);
-
-            // shard
-            // 选择邻居节点
-            /*int receiverId = r.nextInt(Integer.MAX_VALUE);
-            if (this.hashgraphMember.getLeaderId().equals(this.hashgraphMember.getId())) {
-               receiverId %= this.hashgraphMember.getLeaderNeighborAddrs().size();
-               receiverId = this.hashgraphMember.getLeaderNeighborAddrs().get(receiverId);
-            }else {
-               receiverId %= this.hashgraphMember.getIntraShardNeighborAddrs().size();
-               receiverId = this.hashgraphMember.getIntraShardNeighborAddrs().get(receiverId);
-            }*/
-
 
             //non-shard
             // 选择邻居节点
-            int receiverId = r.nextInt(Integer.MAX_VALUE);
-            receiverId %= this.hashgraphMember.getNumNodes();
-            if (receiverId == this.hashgraphMember.getId()) {
-                receiverId ++;
-                receiverId %= this.hashgraphMember.getNumNodes();
-            }
-
-            try (Socket socket = new Socket("127.0.0.1", receiverId + 8080);
+            int receiverId = r.nextInt(this.hashgraphMember.getIntraShardNeighborAddrs().size());
+            receiverId = new ArrayList<>(this.hashgraphMember.getIntraShardNeighborAddrs().keySet()).get(receiverId);
+            int receiverPort =  this.hashgraphMember.getIntraShardNeighborAddrs().get(receiverId);
+            try (Socket socket = new Socket("127.0.0.1",  receiverPort);
                  BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                  PrintWriter writer = new PrintWriter(socket.getOutputStream(), true)){
                 Request request = new Request();
@@ -123,8 +107,6 @@ public class NodeServer {
                 request.setMapping("/pullEvent");
                 Map<Integer, Integer> hashgraphHeightMap = new HashMap<>();
                 this.hashgraphMember.getHashgraph().forEach((id, chain)->{
-                    //int n = this.hashgraphMember.getSnapshotHeightMap().get(id);
-                    //hashgraphHeightMap.put(id, n + chain.size());
                     if (chain.size() != 0) {
                         hashgraphHeightMap.put(id, chain.get(chain.size()-1).getEventId());
                     }else {
@@ -154,11 +136,23 @@ public class NodeServer {
                     packTransactionListMock(event);
                     // for search parent hash
                     this.hashgraphMember.getHashEventMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
+
+
 //                    this.hashgraphMember.divideRounds();
 //                    this.hashgraphMember.decideFame();
 //                    this.hashgraphMember.findOrder();
 
-                    this.hashgraphMember.snapshot();
+                    // 模拟事件处理时延， 随节点数量的增加而线性增加
+                    int w = 2;
+                    int nodeCount = this.getHashgraphMember().getNumNodes();
+                    int handleTime = nodeCount * w / 2;
+                    int min = handleTime;
+                    int max = handleTime * w ;
+                    int t = r.nextInt(max- min + 1) + min;
+
+                    TimeUnit.MILLISECONDS.sleep(t * 10);
+
+                    this.hashgraphMember.snapshot2();
                     if (nodeId == 0) {
                         List<Integer> height = new ArrayList<>();
                         for (int i = 0; i < this.hashgraphMember.getNumNodes(); i++) {
@@ -188,31 +182,145 @@ public class NodeServer {
             // 选择邻居节点
             int receiverId = r.nextInt(Integer.MAX_VALUE);
             boolean isLeader = this.hashgraphMember.getLeaderId().equals(this.hashgraphMember.getId());
+            int receiverPort;
             if (isLeader) {
                receiverId %= this.hashgraphMember.getLeaderNeighborAddrs().size();
-               receiverId = this.hashgraphMember.getLeaderNeighborAddrs().get(receiverId);
+               receiverId =  new ArrayList<>(this.hashgraphMember.getLeaderNeighborAddrs().keySet()).get(receiverId);
+               receiverPort = this.hashgraphMember.getLeaderNeighborAddrs().get(receiverId);
             }else {
                receiverId %= this.hashgraphMember.getIntraShardNeighborAddrs().size();
-               receiverId = this.hashgraphMember.getIntraShardNeighborAddrs().get(receiverId);
+               receiverId =  new ArrayList<>(this.hashgraphMember.getIntraShardNeighborAddrs().keySet()).get(receiverId);
+               receiverPort = this.hashgraphMember.getIntraShardNeighborAddrs().get(receiverId);
             }
 
-            //non-shard
-            // 选择邻居节点
-       /*     int receiverId = r.nextInt(Integer.MAX_VALUE);
-            receiverId %= this.hashgraphMember.getNumNodes();
-            if (receiverId == this.hashgraphMember.getId()) {
-                receiverId ++;
-                receiverId %= this.hashgraphMember.getNumNodes();
-            }*/
-
-            try (Socket socket = new Socket("127.0.0.1", receiverId + port - hashgraphMember.getId());
+            try (Socket socket = new Socket("127.0.0.1", receiverPort);
                  BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                  PrintWriter writer = new PrintWriter(socket.getOutputStream(), true)){
                 Request request = new Request();
                 request.setCode(200);
 
                 // 首先判断自己是否为leader节点， 再判断receiver 是否为领导人节点
-                if (isLeader && !this.hashgraphMember.getIntraShardNeighborAddrs().contains(new Integer(receiverId))) {
+                if (isLeader && !this.hashgraphMember.getIntraShardNeighborAddrs().containsKey(receiverId)) {
+                    // 接收其他分片内最新未达成共识的事件
+                    request.setMapping("/pullEventByOtherShard");
+                    // 写入请求
+                    writer.println(RequestHandler.requestObject2JsonString(request));
+                    // 获得响应信息
+                    Response response = RequestHandler.getResponseObject(reader);
+                    if (response.getCode() == 200) {
+                        String data = response.getData();
+                        HashMap<Integer, Event> otherShardLastEventWithoutConsensus = JSON.parseObject(data, new TypeReference<HashMap<Integer, Event>>() {
+                            @Override
+                            public HashMap<Integer, Event> parseObject(String text) {
+                                return super.parseObject(text);
+                            }
+                        });
+
+                        // 写入本地hashgraph中
+                        otherShardLastEventWithoutConsensus.forEach((nodeId, event)->{
+                            this.hashgraphMember.getHashgraph().get(nodeId).add(event);
+                        });
+                        // 创建新事件
+                        try {
+                            packNewEventFromRefOtherShardEvent(this.hashgraphMember.getId(), receiverId);
+                        } catch (NoSuchAlgorithmException e) {
+                            log.warn("写入新事件失败");
+                            throw new BusinessException(e);
+                        }
+                    }
+                }else {
+                    // receiver 为分片内节点
+                    request.setMapping("/pullEventBySelfShard");
+                    // 记录当前hashgraph副本的高度
+                    Map<Integer, Integer> hashgraphHeightMap = new HashMap<>();
+                    this.hashgraphMember.getHashgraph().forEach((id, chain)->{
+                        if (chain.size() != 0) {
+                            hashgraphHeightMap.put(id, chain.get(chain.size()-1).getEventId());
+                        }else {
+                            hashgraphHeightMap.put(id, 0);
+                        }
+
+                    });
+                    request.setData(JSONObject.toJSONString(hashgraphHeightMap));
+                    writer.println(RequestHandler.requestObject2JsonString(request));
+                    Response response = RequestHandler.getResponseObject(reader);
+
+                    if (response.getCode() == 200) {
+                        String data = response.getData();
+                        HashMap<Integer, List<Event>> subEventListMap = JSON.parseObject(data, new TypeReference<>() {
+                            @Override
+                            public HashMap<Integer, List<Event>> parseObject(String text) {
+                                return super.parseObject(text);
+                            }
+                        });
+                        boolean resultSign = this.hashgraphMember.addEventBatch(subEventListMap);
+
+                        int nodeId = this.hashgraphMember.getId();
+                        // 创建新事件
+                        Event event = packNewEvent(nodeId, receiverId);
+                        // 打包目前接收到的交易
+                        packTransactionListMock(event);
+
+                        // for search parent hash
+                        this.hashgraphMember.getHashEventMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
+                        // 模拟事件处理时延， 随节点数量的增加而线性增加
+                        int w = 3;
+                        int shardNodeCount = this.getHashgraphMember().getIntraShardNeighborAddrs().size() + 1;
+                        int handleTime = shardNodeCount * w / 2;
+                        int min = handleTime;
+                        int max = handleTime * w ;
+                        int t = r.nextInt(max- min + 1) + min;
+
+                        TimeUnit.MILLISECONDS.sleep(t * 10);
+                    }
+                }
+
+                this.hashgraphMember.snapshot();
+                if (this.hashgraphMember.getId() == 0) {
+                    List<Integer> height = new ArrayList<>();
+                    for (int i = 0; i < this.hashgraphMember.getNumNodes(); i++) {
+                        height.add(this.hashgraphMember.getHashgraph().get(i).size());
+                    }
+                    log.info("node_id: 0 hashgraph height: {} ,neighborsList: {}" , height, this.hashgraphMember.getIntraShardNeighborAddrs());
+                }
+            }catch (Exception e) {
+                log.warn("node_id:{} request node_id:{} gossip communication failed!", this.hashgraphMember.getId(), receiverId);
+                throw new BusinessException(e);
+            }
+        }
+    }
+
+    private void gossipSync_ours_shard() throws Exception{
+        while (!shutdown) {
+            // 间隔 1 ~ 1.5s 发起一次通信
+            Random r = new Random(System.currentTimeMillis() / (this.hashgraphMember.getId() + 1)
+                    + this.hashgraphMember.getId() * 1000);
+            int time = r.nextInt(700) + 500;
+            TimeUnit.MILLISECONDS.sleep(time);
+
+            // shard
+            // 选择邻居节点
+            int receiverId = r.nextInt(Integer.MAX_VALUE);
+            boolean isLeader = this.hashgraphMember.getLeaderId().equals(this.hashgraphMember.getId());
+            int receiverPort;
+            if (isLeader) {
+                receiverId %= this.hashgraphMember.getLeaderNeighborAddrs().size();
+                receiverId =  new ArrayList<>(this.hashgraphMember.getLeaderNeighborAddrs().keySet()).get(receiverId);
+                receiverPort = this.hashgraphMember.getLeaderNeighborAddrs().get(receiverId);
+            }else {
+                receiverId %= this.hashgraphMember.getIntraShardNeighborAddrs().size();
+                receiverId =  new ArrayList<>(this.hashgraphMember.getIntraShardNeighborAddrs().keySet()).get(receiverId);
+                receiverPort = this.hashgraphMember.getIntraShardNeighborAddrs().get(receiverId);
+            }
+
+            try (Socket socket = new Socket("127.0.0.1", receiverPort);
+                 BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                 PrintWriter writer = new PrintWriter(socket.getOutputStream(), true)){
+                Request request = new Request();
+                request.setCode(200);
+
+                // 首先判断自己是否为leader节点， 再判断receiver 是否为领导人节点
+                if (isLeader && !this.hashgraphMember.getIntraShardNeighborAddrs().containsKey(receiverId)) {
                     // 接收其他分片内最新未达成共识的事件
                     request.setMapping("/pullEventByOtherShard");
                     // 写入请求
@@ -267,7 +375,6 @@ public class NodeServer {
                             }
                         });
                         boolean resultSign = this.hashgraphMember.addEventBatch(subEventListMap);
-
                         int nodeId = this.hashgraphMember.getId();
                         // 创建新事件
                         Event event = packNewEvent(nodeId, receiverId);
@@ -275,7 +382,8 @@ public class NodeServer {
                         packTransactionListMock(event);
 
                         // for search parent hash
-                        // this.hashgraphMember.getHashEventMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
+                        this.hashgraphMember.getHashEventMap().put(SHA256.sha256HexString(JSON.toJSONString(event)), event);
+                        // 进行共识
                     }
                 }
 
@@ -285,7 +393,7 @@ public class NodeServer {
                     for (int i = 0; i < this.hashgraphMember.getNumNodes(); i++) {
                         height.add(this.hashgraphMember.getHashgraph().get(i).size());
                     }
-                     log.info("node_id: 0 hashgraph height: {} ,neighborsList: {}" , height, this.hashgraphMember.getIntraShardNeighborAddrs());
+                    log.info("node_id: 0 hashgraph height: {} ,neighborsList: {}" , height, this.hashgraphMember.getIntraShardNeighborAddrs());
                 }
             }catch (Exception e) {
                 log.warn("node_id:{} request node_id:{} gossip communication failed!", this.hashgraphMember.getId(), receiverId);
@@ -293,8 +401,6 @@ public class NodeServer {
             }
         }
     }
-
-
     private void  packNewEventFromRefOtherShardEvent(int selfNodeId, int otherNodeId) throws NoSuchAlgorithmException {
         Event e = new Event();
         List<Event> selfChain = this.hashgraphMember.getHashgraph().get(selfNodeId);
@@ -315,7 +421,6 @@ public class NodeServer {
         e.setSignature(signature);
         selfChain.add(e);
     }
-
 
 
     private synchronized Event packNewEvent(int nodeId, int receiverId) {

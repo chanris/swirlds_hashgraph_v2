@@ -64,7 +64,7 @@ public class RequestHandler {
         HashMap<Integer, Integer> hashMap = JSONObject.parseObject(json, HashMap.class);  //请求者的哈希图高度
         //log.info("解析后的 高度数据:{}", hashMap);
         //  接收者的邻居节点列表
-        List<Integer> neighborIdList = new ArrayList<>(hashgraphMember.getIntraShardNeighborAddrs());
+        List<Integer> neighborIdList = new ArrayList<>(hashgraphMember.getIntraShardNeighborAddrs().keySet());
         // 邻居节点列表添加自己的id
         neighborIdList.add(hashgraphMember.getId());
         // 自己的哈希图高度
@@ -110,7 +110,7 @@ public class RequestHandler {
         //String json = request.getData();
         //HashMap<Integer, Integer> hashMap = JSONObject.parseObject(json, HashMap.class);  //请求者的哈希图高度
         //  接收者的邻居节点列表
-        List<Integer> neighborIdList = new ArrayList<>(hashgraphMember.getIntraShardNeighborAddrs());
+        List<Integer> neighborIdList = new ArrayList<>(hashgraphMember.getIntraShardNeighborAddrs().keySet());
         // 邻居节点列表添加自己的id
         neighborIdList.add(hashgraphMember.getId());
         // 如果自己不是某分片的leader，则拒绝处理该请求
@@ -224,15 +224,11 @@ public class RequestHandler {
         response.setMessage("SUCCESS");
     }
 
-    private /*synchronized*/ void generatePullEvents(HashMap<Integer, Integer> hashMap, Response response) {
-        ConcurrentHashMap<Integer, List<Event>> subEventList = new ConcurrentHashMap<>();
+    private void generatePullEvents(HashMap<Integer, Integer> hashMap, Response response) {
+        HashMap<Integer, List<Event>> subEventList = new HashMap<>();
         for (Map.Entry<Integer, List<Event>> entry : this.hashgraphMember.getHashgraph().entrySet()) {
             Integer id = entry.getKey();
             List<Event> chain = entry.getValue();
-            //int n = this.hashgraphMember.getSnapshotHeightMap().get(id);
-            // 历史长度
-            //int my_size = chain.size() + n;
-
             int my_size ;
             if (chain.size() != 0) {
                 my_size = chain.get(chain.size()-1).getEventId();
@@ -247,13 +243,13 @@ public class RequestHandler {
             }
 
             if (my_size > guest_size) {
-//                subEventList.put(id, chain.subList(guest_size, my_size));  !!!!! 巨坑： watch out ! 会引发并发问题T_T T_T
-                int gap = my_size - guest_size;
-                List<Event> c = new ArrayList<>(gap);
-                for (int i = chain.size()-gap; i < chain.size(); i++) {
-                    c.add(chain.get(i));
+                ArrayList<Event> list = new ArrayList<>();
+                for (int i = chain.size()-1; i >= 0; i--) {
+                    if (chain.get(i).getEventId() > guest_size) {
+                        list.add(chain.get(i));
+                    }
                 }
-                subEventList.put(id, c);
+                subEventList.put(id, list);
             }
         }
         String res;

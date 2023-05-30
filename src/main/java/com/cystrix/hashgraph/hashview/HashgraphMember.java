@@ -44,8 +44,8 @@ public class HashgraphMember {
     private Integer consensusEventNum = 0;
 
     private Integer transactionNum = 10;
-    private List<Integer> intraShardNeighborAddrs;
-    private List<Integer> leaderNeighborAddrs;  // 当前epoch内 节点的邻居节点地址，地址格式：ip:port。由于都是本地模拟，存储端口号即可
+    private HashMap<Integer, Integer> intraShardNeighborAddrs;
+    private HashMap<Integer, Integer> leaderNeighborAddrs;  // 当前epoch内 节点的邻居节点地址，地址格式：nodeId:port
 
 
     private BigDecimal nodeStatusComprehensiveEvaluationValue; //存储当前节点在当前epoch的的权值
@@ -246,20 +246,24 @@ public class HashgraphMember {
             }
             consensusEventNum += 1;
         }
-
-       /* if (getId() == 0) {
-            System.out.println("**********************************************************************************************************");
-            System.out.println("node_id:" + getId() + " hashgraph " + this.consensusEventNum);
-            System.out.println("**********************************************************************************************************");
-        }*/
     }
 
-
-    public void snapshot2() {
-
+    public void snapshot2() { //no shard
+        List<Integer> heightList = new ArrayList<>(this.numNodes); // 存储当前hashgraph的平行链高度
+        this.hashgraph.forEach((id,chain)->{
+            heightList.add(chain.size());
+        });
+        int threshold = 20;
+        for (Map.Entry<Integer, List<Event>> entry : this.hashgraph.entrySet()) {
+            List<Event> chain = entry.getValue();
+            if (chain.size() > threshold) {
+                int size = chain.size() * 2 / 3;
+                entry.setValue(chain.subList(size, chain.size()));
+            }
+        }
     }
 
-    public void snapshot() {
+    public void snapshot() { // shard
         // 削减hashgraph 的大小
         // 削减hashEventMap
         // 记录打包交易的数量
@@ -267,32 +271,28 @@ public class HashgraphMember {
         this.hashgraph.forEach((id,chain)->{
             heightList.add(chain.size());
         });
-        List<Integer> neighborIdList = new ArrayList<>();
-        neighborIdList.addAll(this.intraShardNeighborAddrs);
+        List<Integer> neighborIdList = new ArrayList<>(this.intraShardNeighborAddrs.keySet());
         neighborIdList.add(this.id);
-        int threshold = 30;
+        int threshold = 20;
 
         // 削减hashgraph
-        this.hashgraph.forEach((id,chain)->{
+        for (Map.Entry<Integer, List<Event>> entry : this.hashgraph.entrySet()) {
+            Integer id = entry.getKey();
+            List<Event> chain = entry.getValue();
             if (neighborIdList.contains(id)) {
-                    if (chain.size() > threshold) {
-                        log.debug("SNAPSHOT!!!************************** neigbors:{}", neighborIdList);
-                        List<Event> subRemoveList = new ArrayList<>(10);
-                        int size = chain.size() * 2 / 3;
-                        for (int i = 0; i < size; i++) {
-                            subRemoveList.add(chain.get(i));
-                        }
-                        chain.removeAll(subRemoveList);
-                    }
-            }else {
-                int size = chain.size();  // > 50  - 40
-                if (size >= 20) {
-                    Event lastEvent = chain.get(size-1);
+                if (chain.size() > threshold) {
+                    int size = chain.size() * 2 / 3;
+                    entry.setValue(chain.subList(size, chain.size()-1));
+                }
+            } else {
+                if (chain.size() >= 20) {
+                    Event lastEvent = chain.get(chain.size()-1);
                     chain = new ArrayList<>();
                     chain.add(lastEvent);
                 }
             }
-        });
+        }
+
 
     }
 

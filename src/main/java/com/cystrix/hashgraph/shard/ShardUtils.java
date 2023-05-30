@@ -14,6 +14,7 @@ import java.util.*;
 public class ShardUtils {
 
     // 根据权值分片，每一个分片内的权值总和要求尽量持平
+    // shardSize: 每个分片的大小
     // 16个节点
     public static void shard(List<NodeServer> nodeList, int shardSize) {
         if (nodeList.size() % shardSize != 0) {
@@ -32,15 +33,15 @@ public class ShardUtils {
 //        weightList.sort(Collections.reverseOrder());
         Collections.sort(weightList);
         // shard-id, nodeIdList
-        HashMap<Integer, List<Integer>> shardNodeListMap = new HashMap<>(shardSize);
-        for (int i = 0; i < shardSize; i++) {
-            shardNodeListMap.put(i, new ArrayList<>(nodeList.size()/shardSize));
+        HashMap<Integer, List<Integer>> shardNodeListMap = new HashMap<>(nodeList.size()/shardSize);
+        for (int i = 0; i < nodeList.size()/shardSize; i++) {
+            shardNodeListMap.put(i, new ArrayList<>(shardSize));
         }
-        for (int i = 0; i < weightList.size(); i += shardSize) {
+        for (int i = 0; i < weightList.size(); i +=  shardSize) {
             // 分组 添加 节点 id
             for (int j = 0; j < shardSize; j++) {
                 //shardNodeListMap.get(j).add(nodeWeightMap.get(weightList.get(j*(i+1))));
-                List<Integer> shardNodeIdList = shardNodeListMap.get(j);
+                List<Integer> shardNodeIdList = shardNodeListMap.get(i / shardSize);
                 int nodeId = nodeWeightMap.get(weightList.get(i + j));
                 shardNodeIdList.add(nodeId);
             }
@@ -98,23 +99,29 @@ public class ShardUtils {
             for (int i = 0; i < shardSize; i++) {
                 int nodeId = shardNodeList.get(i); // 一个分片内的一个nodeId
                 HashgraphMember hashgraphMember = nodeList.get(nodeId).getHashgraphMember();
-                hashgraphMember.setIntraShardNeighborAddrs(new ArrayList<>(shardNodeList));
+                HashMap<Integer, Integer> intraShardNeighborsAddrMap = new HashMap<>(shardSize-1);
+                for (int j = 0; j < shardSize; j++) {
+                    int nodeId2 = shardNodeList.get(j);
+                    if (nodeId2 != nodeId) {
+                        intraShardNeighborsAddrMap.put(nodeId2, nodeList.get(nodeId2).getPort());
+                    }
+                }
 
-                List<Integer> neighborIdList =  hashgraphMember.getIntraShardNeighborAddrs();
-                List<Integer> neighborIdList2 = new ArrayList<>(neighborIdList);
-                neighborIdList2.remove(new Integer(nodeId));
-                hashgraphMember.setIntraShardNeighborAddrs(neighborIdList2);
+                hashgraphMember.setIntraShardNeighborAddrs(intraShardNeighborsAddrMap);
                 hashgraphMember.setNodeStatusComprehensiveEvaluationValue(nodeWeightMap2.get(nodeId));
                 // 如果是leader节点
                 if (leaderIdList.contains(nodeId)) {
-                    List<Integer> leaderList = new ArrayList<>(leaderIdList);
-                    leaderList.remove(new Integer(nodeId));
-                    leaderList.addAll(neighborIdList2);
-                    hashgraphMember.setLeaderNeighborAddrs(leaderList);
+                    HashMap<Integer, Integer> leaderNeighborsAddrMap = new HashMap<>();
+                    for (Integer leaderId : leaderIdList) {
+                        if (leaderId != nodeId) {
+                            leaderNeighborsAddrMap.put(leaderId, nodeList.get(leaderId).getPort());
+                        }
+                    }
+                    leaderNeighborsAddrMap.putAll(intraShardNeighborsAddrMap);
+                    hashgraphMember.setLeaderNeighborAddrs(leaderNeighborsAddrMap);
                 }
-                log.info("node_id:{}, intra neighbors:{}, leader_id:{} leader neighbors:{} ",nodeId,    hashgraphMember.getIntraShardNeighborAddrs(),
+                log.info("node_id:{}, intra neighbors:{}, leader_id:{} leader neighbors:{} ",nodeId, hashgraphMember.getIntraShardNeighborAddrs(),
                         hashgraphMember.getLeaderId(), hashgraphMember.getLeaderNeighborAddrs());
-
             }
         });
     }
